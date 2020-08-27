@@ -23,7 +23,6 @@
  */
 package com.intuit.karate.core;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -62,6 +61,20 @@ public class Scenario {
         this.section = section;
         this.index = index;
     }
+    
+    public String getNameAndDescription() {
+        String temp = "";
+        if (name != null) {
+            temp = temp + name;
+        }
+        if (description != null) {
+            if (!temp.isEmpty()) {
+                temp = temp + " ";
+            }
+            temp = temp + description;
+        }
+        return temp;
+    }
 
     public String getNameForReport() {
         if (name == null) {
@@ -69,18 +82,6 @@ public class Scenario {
         } else {
             return getDisplayMeta() + " " + name;
         }
-    }
-
-    public ScenarioInfo toInfo(Path featurePath) {
-        ScenarioInfo info = new ScenarioInfo();
-        if (featurePath != null) {
-            info.setFeatureDir(featurePath.getParent().toString());
-            info.setFeatureFileName(featurePath.getFileName().toString());
-        }
-        info.setScenarioName(name);
-        info.setScenarioDescription(description);
-        info.setScenarioType(getKeyword());
-        return info;
     }
 
     // only called for dynamic scenarios

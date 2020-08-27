@@ -24,14 +24,14 @@
 package com.intuit.karate.junit5;
 
 import com.intuit.karate.CallContext;
-import com.intuit.karate.FileUtils;
-import com.intuit.karate.core.Engine;
 import com.intuit.karate.core.ExecutionContext;
 import com.intuit.karate.core.Feature;
 import com.intuit.karate.core.FeatureContext;
 import com.intuit.karate.core.FeatureExecutionUnit;
+import com.intuit.karate.core.FeatureResult;
+import com.intuit.karate.core.HtmlFeatureReport;
+import com.intuit.karate.core.HtmlSummaryReport;
 import com.intuit.karate.core.ScenarioExecutionUnit;
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -47,9 +47,14 @@ public class FeatureNode implements Iterator<DynamicTest>, Iterable<DynamicTest>
     public final Feature feature;
     public final ExecutionContext exec;
     public final FeatureExecutionUnit featureUnit;
+    public final HtmlSummaryReport summary;
+    public final String reportDir;
+
     Iterator<ScenarioExecutionUnit> iterator;
 
-    public FeatureNode(Feature feature, String tagSelector) {
+    public FeatureNode(String reportDir, HtmlSummaryReport summary, Feature feature, String tagSelector) {
+        this.reportDir = reportDir;
+        this.summary = summary;
         this.feature = feature;
         FeatureContext featureContext = new FeatureContext(null, feature, tagSelector);
         CallContext callContext = new CallContext(null, true);
@@ -57,14 +62,14 @@ public class FeatureNode implements Iterator<DynamicTest>, Iterable<DynamicTest>
         featureUnit = new FeatureExecutionUnit(exec);
         featureUnit.init();
         List<ScenarioExecutionUnit> selected = new ArrayList();
-        for(ScenarioExecutionUnit unit : featureUnit.getScenarioExecutionUnits()) {
+        for (ScenarioExecutionUnit unit : featureUnit.getScenarioExecutionUnits()) {
             if (featureUnit.isSelected(unit)) { // tag filtering
                 selected.add(unit);
             }
         }
         if (!selected.isEmpty()) { // make sure we trigger junit html report on last unit (after tag filtering)
             selected.get(selected.size() - 1).setLast(true);
-        }        
+        }
         iterator = selected.iterator();
     }
 
@@ -79,10 +84,14 @@ public class FeatureNode implements Iterator<DynamicTest>, Iterable<DynamicTest>
         return DynamicTest.dynamicTest(unit.scenario.getNameForReport(), () -> {
             featureUnit.run(unit);
             boolean failed = unit.result.isFailed();
-            if (unit.isLast() || failed) {
+            if (unit.isLast()) {
                 featureUnit.stop();
-                exec.result.printStats(null);
-                Engine.saveResultHtml(FileUtils.getBuildDir() + File.separator + "surefire-reports", exec.result, null);
+                FeatureResult result = exec.result;
+                if (!result.isEmpty()) {
+                    result.printStats(null);
+                    HtmlFeatureReport.saveFeatureResult(reportDir, result);
+                    summary.addFeatureResult(result);
+                }
             }
             if (failed) {
                 Assertions.fail(unit.result.getError().getMessage());

@@ -29,13 +29,13 @@ import com.intuit.karate.Results;
 import com.intuit.karate.ScriptValueMap;
 import com.intuit.karate.StringUtils;
 import com.intuit.karate.exception.KarateException;
+import com.jayway.jsonpath.JsonPath;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-
 /**
  *
  * @author pthomas3
@@ -43,10 +43,10 @@ import java.util.Map;
 public class FeatureResult {
 
     private final Results results;
-    private final Feature feature;
-    private final String displayName;
+    private final Feature feature;    
     private final List<ScenarioResult> scenarioResults = new ArrayList();
 
+    private String displayName; // mutable for users who want to customize
     private int scenarioCount;
     private int failedCount;
     private List<Throwable> errors;
@@ -67,7 +67,7 @@ public class FeatureResult {
         if (reportPath != null) {
             sb.append("report: ").append(reportPath).append('\n');
         }
-        sb.append(String.format("scenarios: %2d | passed: %2d | failed: %2d | time: %.4f\n", scenarioCount, scenarioCount - failedCount, failedCount, durationMillis / 1000));
+        sb.append(String.format("scenarios: %2d | passed: %2d | failed: %2d | time: %.4f\n", scenarioCount, getPassedCount(), failedCount, durationMillis / 1000));
         sb.append("---------------------------------------------------------");
         System.out.println(sb);
     }
@@ -99,24 +99,27 @@ public class FeatureResult {
         return map;
     }
 
-    // this "flattens" all steps from all scenarios
-    public List<StepResult> getStepResults() {
+    public List<StepResult> getAllScenarioStepResultsNotHidden() {
         List<StepResult> list = new ArrayList();
         for (ScenarioResult sr : scenarioResults) {
-            list.addAll(sr.getStepResults());
+            list.addAll(sr.getStepResultsNotHidden());
         }
         return list;
     }
 
     public Results getResults() {
         return results;
-    }        
+    }
 
     public FeatureResult(Results results, Feature feature) {
         this.results = results;
         this.feature = feature;
         displayName = FileUtils.removePrefix(feature.getRelativePath());
     }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }        
 
     public Feature getFeature() {
         return feature;
@@ -167,8 +170,12 @@ public class FeatureResult {
         if (callArg == null) {
             return null;
         }
-        Map temp = JsonUtils.removeCyclicReferences(callArg);
-        return JsonUtils.toPrettyJsonString(JsonUtils.toJsonDoc(temp));
+        try {
+            Map temp = JsonUtils.removeCyclicReferences(callArg);
+            return JsonUtils.toPrettyJsonString(JsonPath.parse(temp));
+        } catch (Throwable t) {
+            return "#error: " + t.getMessage();
+        }
     }
 
     public Map<String, Object> getCallArg() {
@@ -194,9 +201,17 @@ public class FeatureResult {
     public int getFailedCount() {
         return failedCount;
     }
+    
+    public boolean isEmpty() {
+        return scenarioCount == 0;
+    }
 
     public int getScenarioCount() {
         return scenarioCount;
+    }
+    
+    public int getPassedCount() {
+        return scenarioCount - failedCount;
     }
 
     public boolean isFailed() {
@@ -239,7 +254,7 @@ public class FeatureResult {
                 addError(copy);
             } else {
                 addError(result.getError());
-            }            
+            }
         }
     }
 

@@ -32,6 +32,9 @@ import com.intuit.karate.core.Feature;
 import com.intuit.karate.core.FeatureExecutionUnit;
 import com.intuit.karate.core.FeatureParser;
 import com.intuit.karate.core.FeatureResult;
+import com.intuit.karate.core.HtmlFeatureReport;
+import com.intuit.karate.core.HtmlReport;
+import com.intuit.karate.core.HtmlSummaryReport;
 import com.intuit.karate.core.ScenarioExecutionUnit;
 import com.intuit.karate.core.Tags;
 import com.intuit.karate.job.JobConfig;
@@ -78,6 +81,12 @@ public class Runner {
         }
 
         List<Resource> resolveResources() {
+            RunnerOptions options = RunnerOptions.fromAnnotationAndSystemProperties(paths, tags, optionsClass);
+            paths = options.features;
+            tags = options.tags;
+            if (scenarioName == null) { // this could have been set by cli (e.g. intellij) so preserve if needed
+                scenarioName = options.name;
+            }
             if (resources == null) {
                 return FileUtils.scanForFeatureFiles(paths, Thread.currentThread().getContextClassLoader());
             }
@@ -206,8 +215,7 @@ public class Runner {
     }
 
     public static Results parallel(Class<?> clazz, int threadCount, String reportDir) {
-        RunnerOptions options = RunnerOptions.fromAnnotationAndSystemProperties(clazz);
-        return parallel(options.getTags(), options.getFeatures(), options.getName(), null, threadCount, reportDir);
+        return new Builder().forClass(clazz).reportDir(reportDir).parallel(threadCount);
     }
 
     public static Results parallel(List<String> tags, List<String> paths, int threadCount, String reportDir) {
@@ -332,6 +340,7 @@ public class Runner {
                 latch.await();
             }
             results.stopTimer();
+            HtmlSummaryReport summary = new HtmlSummaryReport();
             for (FeatureResult result : featureResults) {
                 int scenarioCount = result.getScenarioCount();
                 results.addToScenarioCount(scenarioCount);
@@ -344,6 +353,18 @@ public class Runner {
                     results.addToFailedList(result.getPackageQualifiedName(), result.getErrorMessages());
                 }
                 results.addScenarioResults(result.getScenarioResults());
+                if (!result.isEmpty()) {
+                    HtmlFeatureReport.saveFeatureResult(reportDir, result);
+                    summary.addFeatureResult(result);
+                }
+            }
+            // saving reports can in rare cases throw errors, so do within try block
+            summary.save(reportDir);
+            results.printStats(threadCount);
+            Engine.saveStatsJson(reportDir, results);
+            HtmlReport.saveTimeline(reportDir, results, null);
+            if (options.hooks != null) {
+                options.hooks.forEach(h -> h.afterAll(results));
             }
         } catch (Exception e) {
             LOGGER.error("karate parallel runner failed: ", e.getMessage());
@@ -351,12 +372,6 @@ public class Runner {
         } finally {
             featureExecutor.shutdownNow();
             scenarioExecutor.shutdownNow();
-        }
-        results.printStats(threadCount);
-        Engine.saveStatsJson(reportDir, results, null);
-        Engine.saveTimelineHtml(reportDir, results, null);
-        if (options.hooks != null) {
-            options.hooks.forEach(h -> h.afterAll(results));
         }
         return results;
     }

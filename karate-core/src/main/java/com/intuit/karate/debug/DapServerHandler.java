@@ -23,17 +23,13 @@
  */
 package com.intuit.karate.debug;
 
-import com.intuit.karate.Actions;
 import com.intuit.karate.Runner;
 import com.intuit.karate.RunnerOptions;
-import com.intuit.karate.StepActions;
+import com.intuit.karate.ScriptValue;
 import com.intuit.karate.StringUtils;
-import com.intuit.karate.core.Engine;
 import com.intuit.karate.core.ExecutionHook;
 import com.intuit.karate.core.ExecutionHookFactory;
-import com.intuit.karate.core.FeatureParser;
 import com.intuit.karate.core.Result;
-import com.intuit.karate.core.Scenario;
 import com.intuit.karate.core.ScenarioContext;
 import com.intuit.karate.core.Step;
 import io.netty.buffer.Unpooled;
@@ -71,6 +67,7 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
 
     private boolean singleFeature;
     private String launchCommand;
+    private String preStep;
 
     public DapServerHandler(DapServer server) {
         this.server = server;
@@ -115,7 +112,8 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
         return sb.isBreakpoint(line);
     }
 
-    private DebugThread thread(Number threadId) {
+    private DebugThread thread(DapMessage dm) {
+        Number threadId = dm.getThreadId();
         if (threadId == null) {
             return null;
         }
@@ -155,12 +153,13 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
                 Map<String, Object> map = new HashMap();
                 map.put("name", k);
                 try {
-                    map.put("value", v.getAsString());
+                    map.put("value", v.getAsStringRemovingCyclicReferences());
                 } catch (Exception e) {
                     logger.warn("unable to convert to string: {} - {}", k, v);
                     map.put("value", "(unknown)");
                 }
                 map.put("type", v.getTypeAsShortString());
+                map.put("evaluateName", k);
                 // if > 0 , this can be used  by client to request more info
                 map.put("variablesReference", 0);
                 list.add(map);
@@ -194,7 +193,9 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
                 ctx.write(response(req)
                         .body("supportsConfigurationDoneRequest", true)
                         .body("supportsRestartRequest", true)
-                        .body("supportsStepBack", true));
+                        .body("supportsStepBack", true)
+                        .body("supportsVariableType", true)
+                        .body("supportsClipboardContext", true));
                 ctx.write(event("initialized"));
                 ctx.write(event("output").body("output", "debug server listening on port: " + server.getPort() + "\n"));
                 break;
@@ -208,13 +209,15 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
                 // normally a single feature full path, but can be set with any valid karate.options
                 // for e.g. "-t ~@ignore -T 5 classpath:demo.feature"
                 launchCommand = StringUtils.trimToNull(req.getArgument("karateOptions", String.class));
+                preStep = StringUtils.trimToNull(req.getArgument("debugPreStep", String.class));
+                if (preStep != null) {
+                    logger.debug("using pre-step: {}", preStep);
+                }
                 if (launchCommand == null) {
                     launchCommand = req.getArgument("feature", String.class);
                     singleFeature = true;
-                    start();
-                } else {
-                    start();
                 }
+                start();
                 ctx.write(response(req));
                 break;
             case "threads":
@@ -247,48 +250,51 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
                 ctx.write(response(req).body("variables", variables(variablesReference)));
                 break;
             case "next":
-                thread(req.getThreadId()).step().resume();
+                thread(req).next().resume();
                 ctx.write(response(req));
                 break;
             case "stepBack":
             case "reverseContinue": // since we can't disable this button
-                thread(req.getThreadId()).stepBack(true).resume();
+                thread(req).stepBack().resume();
                 ctx.write(response(req));
                 break;
             case "stepIn":
-                thread(req.getThreadId()).stepIn().resume();
+                thread(req).stepIn().resume();
                 ctx.write(response(req));
                 break;
             case "stepOut":
-                thread(req.getThreadId()).stepOut().resume();
+                thread(req).stepOut().resume();
                 ctx.write(response(req));
                 break;
             case "continue":
-                thread(req.getThreadId()).clearStepModes().resume();
+                thread(req)._continue().resume();
                 ctx.write(response(req));
                 break;
             case "pause":
                 ctx.write(response(req));
-                thread(req.getThreadId()).pause();
+                thread(req).pause();
                 break;
             case "evaluate":
                 String expression = req.getArgument("expression", String.class);
                 Number evalFrameId = req.getArgument("frameId", Number.class);
+                String reqContext = req.getArgument("context", String.class);
                 ScenarioContext evalContext = FRAMES.get(evalFrameId.longValue());
-                Scenario evalScenario = evalContext.getExecutionUnit().scenario;
-                Step evalStep = new Step(evalScenario.getFeature(), evalScenario, evalScenario.getIndex() + 1);
                 String result;
-                try {
-                    FeatureParser.updateStepFromText(evalStep, expression);
-                    Actions evalActions = new StepActions(evalContext);
-                    Result evalResult = Engine.executeStep(evalStep, evalActions);
+                if ("clipboard".equals(reqContext)) {
+                    try {
+                        ScriptValue sv = evalContext.vars.get(expression);
+                        result = sv.getAsPrettyString();
+                    } catch (Exception e) {
+                        result = "[error] " + e.getMessage();
+                    }
+                } else {
+                    evaluatePreStep(evalContext);
+                    Result evalResult = evalContext.evalAsStep(expression);
                     if (evalResult.isFailed()) {
                         result = "[error] " + evalResult.getError().getMessage();
                     } else {
                         result = "[done]";
                     }
-                } catch (Exception e) {
-                    result = "[error] " + e.getMessage();
                 }
                 ctx.write(response(req)
                         .body("result", result)
@@ -317,6 +323,18 @@ public class DapServerHandler extends SimpleChannelInboundHandler<DapMessage> im
                 ctx.write(response(req));
         }
         ctx.writeAndFlush(Unpooled.EMPTY_BUFFER);
+    }
+
+    protected void evaluatePreStep(ScenarioContext context) {
+        if (preStep == null) {
+            return;
+        }
+        Result result = context.evalAsStep(preStep);
+        if (result.isFailed()) {
+            output("[debug] pre-step failed: " + preStep + " - " + result.getError().getMessage());
+        } else {
+            output("[debug] pre-step success: " + preStep);
+        }
     }
 
     @Override

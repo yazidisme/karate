@@ -129,6 +129,10 @@ public class Tags implements Iterable<Tag> {
     public List<String> getTags() {
         return tags;
     }
+    
+    public Collection<String> getTagKeys() {
+        return tagValues.keySet();
+    }
 
     public Map<String, List<String>> getTagValues() {
         return tagValues;
@@ -236,7 +240,7 @@ public class Tags implements Iterable<Tag> {
                 sb.append("not('").append(and.substring(1)).append("')");
             } else {
                 sb.append("anyOf(");
-                List<String> or = StringUtils.split(and, ',');
+                List<String> or = StringUtils.split(and, ',', false);
                 for (String tag : or) {
                     sb.append('\'').append(tag).append('\'').append(',');
                 }

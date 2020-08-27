@@ -23,41 +23,22 @@
  */
 package com.intuit.karate.robot;
 
-import com.intuit.karate.StringUtils;
 import com.intuit.karate.driver.Keys;
-import com.intuit.karate.shell.Command;
-import com.sun.jna.Native;
-import com.sun.jna.platform.win32.User32;
-import com.sun.jna.platform.win32.WinDef.HWND;
+import java.awt.BasicStroke;
 import java.awt.Color;
-import java.awt.Image;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.event.KeyEvent;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
-import java.io.File;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Predicate;
-import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
+import javax.swing.JComponent;
 import javax.swing.JFrame;
-import javax.swing.WindowConstants;
-import org.bytedeco.javacpp.DoublePointer;
-import org.bytedeco.javacv.CanvasFrame;
-import org.bytedeco.javacv.Java2DFrameConverter;
-import org.bytedeco.javacv.Java2DFrameUtils;
-import org.bytedeco.javacv.OpenCVFrameConverter;
-import static org.bytedeco.opencv.global.opencv_core.minMaxLoc;
-import static org.bytedeco.opencv.global.opencv_imgcodecs.*;
-import static org.bytedeco.opencv.global.opencv_imgproc.*;
-import org.bytedeco.opencv.opencv_core.Mat;
-import org.bytedeco.opencv.opencv_core.Point;
-import org.bytedeco.opencv.opencv_core.Point2f;
-import org.bytedeco.opencv.opencv_core.Point2fVector;
-import org.bytedeco.opencv.opencv_core.Rect;
-import org.bytedeco.opencv.opencv_core.Scalar;
-import org.bytedeco.opencv.opencv_core.Size;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,250 +48,9 @@ import org.slf4j.LoggerFactory;
  */
 public class RobotUtils {
 
-    private static final Logger logger = LoggerFactory.getLogger(RobotUtils.class);   
+    private static final Logger logger = LoggerFactory.getLogger(RobotUtils.class);
 
-    public static Region find(File source, File target, boolean resize) {
-        return find(read(source), read(target), resize);
-    }
-    
-    public static Region find(BufferedImage source, byte[] bytes, boolean resize) {
-        Mat srcMat = Java2DFrameUtils.toMat(source);
-        return find(srcMat, read(bytes), resize);
-    }    
-
-    public static Region find(BufferedImage source, File target, boolean resize) {
-        Mat srcMat = Java2DFrameUtils.toMat(source);
-        return find(srcMat, read(target), resize);
-    }
-
-    public static Mat rescale(Mat mat, double scale) {
-        Mat resized = new Mat();
-        resize(mat, resized, new Size(), scale, scale, CV_INTER_AREA);
-        return resized;
-    }
-
-    public static Region find(Mat source, Mat target, boolean resize) {
-        Double prevMinVal = null;
-        double prevRatio = -1;
-        Point prevMinPt = null;
-        double prevScore = -1;
-        //=====================
-        double step = 0.1;
-        int count = resize ? 5 : 0;
-        int targetScore = target.size().area() * 300; // magic number
-        for (int i = -count; i <= count; i++) {            
-            double scale = 1 + step * i;
-            Mat resized = scale == 1 ? source : rescale(source, scale);
-            Size temp = resized.size();
-            logger.debug("scale: {} - {}:{} - target: {}", scale, temp.width(), temp.height(), targetScore);
-            Mat result = new Mat();
-            matchTemplate(resized, target, result, CV_TM_SQDIFF);
-            DoublePointer minVal = new DoublePointer(1);
-            DoublePointer maxVal = new DoublePointer(1);
-            Point minPt = new Point();
-            Point maxPt = new Point();
-            minMaxLoc(result, minVal, maxVal, minPt, maxPt, null);
-            double tempMinVal = minVal.get();
-            double ratio = (double) 1 / scale;
-            double score = tempMinVal / targetScore;
-            String minValString = String.format("%.1f", tempMinVal);            
-            if (prevMinVal == null || tempMinVal < prevMinVal) {
-                prevMinVal = tempMinVal;
-                prevRatio = ratio;
-                prevMinPt = minPt;
-                prevScore = score;
-                logger.debug("found minVal: {}, score: {}, ratio: {}", minValString, score, ratio);
-            } else {
-                logger.debug("ignore minVal: {}, score: {}, ratio: {}", minValString, score, ratio);
-            }
-        }
-        if (prevScore > 1.5) {
-            logger.debug("match quality insufficient: {}", prevScore);
-            return null;
-        }
-        int x = (int) Math.round(prevMinPt.x() * prevRatio);
-        int y = (int) Math.round(prevMinPt.y() * prevRatio);
-        int width = (int) Math.round(target.cols() * prevRatio);
-        int height = (int) Math.round(target.rows() * prevRatio);
-        return new Region(x, y, width, height);
-    }
-
-    public static Mat loadAndShowOrExit(File file, int flags) {
-        Mat image = read(file, flags);
-        show(image, file.getName());
-        return image;
-    }
-
-    public static BufferedImage readImage(File file) {
-        Mat mat = read(file, IMREAD_GRAYSCALE);
-        return toBufferedImage(mat);
-    }
-
-    public static Mat read(File file) {
-        return read(file, IMREAD_GRAYSCALE);
-    }
-    
-    public static Mat read(byte[] bytes) {
-        return read(bytes, IMREAD_GRAYSCALE);
-    }    
-    
-    public static Mat read(byte[] bytes, int flags) {
-        Mat image = imdecode(new Mat(bytes), flags);
-        if (image.empty()) {
-            throw new RuntimeException("image decode failed");
-        }
-        return image;
-    }    
-
-    public static Mat read(File file, int flags) {
-        Mat image = imread(file.getAbsolutePath(), flags);
-        if (image.empty()) {
-            throw new RuntimeException("image not found: " + file.getAbsolutePath());
-        }
-        return image;
-    }
-
-    public static File save(BufferedImage image, File file) {
-        try {
-            ImageIO.write(image, "png", file);
-            return file;
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    public static void show(Mat mat, String title) {
-        OpenCVFrameConverter.ToMat converter = new OpenCVFrameConverter.ToMat();
-        CanvasFrame canvas = new CanvasFrame(title, 1);
-        canvas.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        canvas.showImage(converter.convert(mat));
-    }
-
-    public static void show(Image image, String title) {
-        CanvasFrame canvas = new CanvasFrame(title, 1);
-        canvas.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        canvas.showImage(image);
-    }
-
-    public static void save(Mat image, File file) {
-        imwrite(file.getAbsolutePath(), image);
-    }
-
-    public static Mat drawOnImage(Mat image, Point2fVector points) {
-        Mat dest = image.clone();
-        int radius = 5;
-        Scalar red = new Scalar(0, 0, 255, 0);
-        for (int i = 0; i < points.size(); i++) {
-            Point2f p = points.get(i);
-            circle(dest, new Point(Math.round(p.x()), Math.round(p.y())), radius, red);
-        }
-        return dest;
-    }
-
-    public static Mat drawOnImage(Mat image, Rect overlay, Scalar color) {
-        Mat dest = image.clone();
-        rectangle(dest, overlay, color);
-        return dest;
-    }
-
-    public static BufferedImage toBufferedImage(Mat mat) {
-        OpenCVFrameConverter.ToMat openCVConverter = new OpenCVFrameConverter.ToMat();
-        Java2DFrameConverter java2DConverter = new Java2DFrameConverter();
-        return java2DConverter.convert(openCVConverter.convert(mat));
-    }
-
-    //==========================================================================
-    //
-    private static final String MAC_GET_PROCS
-            = "    tell application \"System Events\""
-            + "\n    set procs to (processes whose background only is false)"
-            + "\n    set results to {}"
-            + "\n    repeat with n from 1 to the length of procs"
-            + "\n      set p to item n of procs"
-            + "\n      set entry to { name of p as text,\"|\"}"
-            + "\n      set end of results to entry"
-            + "\n    end repeat"
-            + "\n  end tell"
-            + "\n  results";
-
-    public static List<String> getAppsMacOs() {
-        String res = Command.exec(true, null, "osascript", "-e", MAC_GET_PROCS);
-        res = res + ", ";
-        res = res.replace(", |, ", "\n");
-        return StringUtils.split(res, '\n');
-    }
-
-    public static boolean switchToMacOs(Predicate<String> condition) {
-        List<String> list = getAppsMacOs();
-        for (String s : list) {
-            if (condition.test(s)) {
-                Command.exec(true, null, "osascript", "-e", "tell app \"" + s + "\" to activate");
-                return true; // TODO use command return code
-            }
-        }
-        return false;
-    }
-
-    public static boolean switchToMacOs(String title) {
-        Command.exec(true, null, "osascript", "-e", "tell app \"" + title + "\" to activate");
-        return true; // TODO use command return code
-    }
-
-    public static boolean switchToWinOs(Predicate<String> condition) {
-        final AtomicBoolean found = new AtomicBoolean();
-        User32.INSTANCE.EnumWindows((HWND hwnd, com.sun.jna.Pointer p) -> {
-            char[] windowText = new char[512];
-            User32.INSTANCE.GetWindowText(hwnd, windowText, 512);
-            String windowName = Native.toString(windowText);
-            logger.debug("scanning window: {}", windowName);
-            if (condition.test(windowName)) {
-                found.set(true);
-                focusWinOs(hwnd);
-                return false;
-            }
-            return true;
-        }, null);
-        return found.get();
-    }
-
-    private static void focusWinOs(HWND hwnd) {
-        User32.INSTANCE.ShowWindow(hwnd, 9); // SW_RESTORE
-        User32.INSTANCE.SetForegroundWindow(hwnd);
-    }
-
-    public static boolean switchToWinOs(String title) {
-        HWND hwnd = User32.INSTANCE.FindWindow(null, title);
-        if (hwnd == null) {
-            return false;
-        } else {
-            focusWinOs(hwnd);
-            return true;
-        }
-    }
-
-    public static boolean switchToLinuxOs(String title) {
-        Command.exec(true, null, "wmctrl", "-FR", title);
-        return true; // TODO ?
-    }
-
-    public static boolean switchToLinuxOs(Predicate<String> condition) {
-        String res = Command.exec(true, null, "wmctrl", "-l");
-        List<String> lines = StringUtils.split(res, '\n');
-        for (String line : lines) {
-            List<String> cols = StringUtils.split(line, ' ');
-            String id = cols.get(0);
-            String host = cols.get(2);
-            int pos = line.indexOf(host);
-            String name = line.substring(pos + host.length() + 1);
-            if (condition.test(name)) {
-                Command.exec(true, null, "wmctrl", "-iR", id);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static void highlight(int x, int y, int width, int height, int time) {
+    public static void highlight(Region region, int time) {
         JFrame f = new JFrame();
         f.setUndecorated(true);
         f.setBackground(new Color(0, 0, 0, 0));
@@ -319,11 +59,81 @@ public class RobotUtils {
         f.setType(JFrame.Type.UTILITY);
         f.setFocusableWindowState(false);
         f.setAutoRequestFocus(false);
-        f.setLocation(x, y);
-        f.setSize(width, height);
+        f.setLocation(region.x, region.y);
+        f.setSize(region.width, region.height);
         f.getRootPane().setBorder(BorderFactory.createLineBorder(Color.RED, 3));
         f.setVisible(true);
         delay(time);
+        f.dispose();
+    }
+
+    static class RegionBox {
+
+        RegionBox(int x, int y, int width, int height, String text) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.text = text;
+        }
+
+        int x;
+        int y;
+        int width;
+        int height;
+        String text;
+
+    }
+
+    public static void highlightAll(Region parent, List<Element> elements, int time, boolean showValue) {
+        JFrame f = new JFrame();
+        f.setUndecorated(true);
+        f.setBackground(new Color(0, 0, 0, 0));
+        f.setAlwaysOnTop(true);
+        f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        f.setType(JFrame.Type.UTILITY);
+        f.setFocusableWindowState(false);
+        f.setAutoRequestFocus(false);
+        f.setLocation(parent.x, parent.y);
+        f.setSize(parent.width, parent.height);
+        f.getRootPane().setBorder(BorderFactory.createLineBorder(Color.YELLOW, 3));
+        // important to extract these so that swing awt ui thread doesn't clash with AUT native ui rendering
+        List<RegionBox> boxes = new ArrayList(elements.size());
+        for (Element e : elements) {
+            Region region = e.getRegion();
+            int x = region.x - parent.x;
+            int y = region.y - parent.y;
+            if (x > 0 && y > 0 && region.width > 0 && region.height > 0) {
+                boxes.add(new RegionBox(x, y, region.width, region.height, showValue ? e.getValue() : null));
+            }
+        }
+        f.add(new JComponent() {
+            @Override
+            public void paint(Graphics g) {
+                Graphics2D g2d = (Graphics2D) g;
+                g2d.setStroke(new BasicStroke(2));
+                for (RegionBox box : boxes) {
+                    g.setColor(Color.RED);
+                    g.drawRect(box.x, box.y, box.width, box.height);
+                    if (showValue) {
+                        String text = box.text;
+                        FontMetrics fm = g.getFontMetrics();
+                        Rectangle2D rect = fm.getStringBounds(text, g);
+                        g.setColor(Color.BLACK);
+                        g.fillRect(box.x, box.y - fm.getAscent(), (int) rect.getWidth(), (int) rect.getHeight());
+                        g.setColor(Color.YELLOW);
+                        g.drawString(box.text, box.x, box.y);
+                    }                    
+                }
+            }
+        });
+        f.setVisible(true);
+        delay(time);
+        if (showValue) {
+            BufferedImage image = new BufferedImage(f.getWidth(), f.getHeight(), BufferedImage.TYPE_INT_RGB);
+            f.paint(image.getGraphics());
+            OpenCvUtils.show(image, parent.toString());
+        }        
         f.dispose();
     }
 

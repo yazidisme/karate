@@ -23,10 +23,13 @@
  */
 package com.intuit.karate;
 
-import com.intuit.karate.core.ScenarioContext;
 import com.intuit.karate.core.Feature;
+import com.intuit.karate.core.ScenarioContext;
 import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
+import org.w3c.dom.Node;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -34,8 +37,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
-import org.w3c.dom.Node;
 
 /**
  *
@@ -45,6 +46,7 @@ public class ScriptValue {
 
     public static final ScriptValue NULL = new ScriptValue(null);
     public static final ScriptValue FALSE = new ScriptValue(false);
+    public static final ScriptValue ZERO = new ScriptValue(0);
 
     public static enum Type {
         NULL,
@@ -208,12 +210,17 @@ public class ScriptValue {
                 String json = getValue(DocumentContext.class).jsonString();
                 return new ScriptValue(JsonPath.parse(json));
             case MAP:
-                if (deep) {                    
+                if (deep) {
                     Map mapSource = getValue(Map.class);
-                    String strSource = JsonPath.parse(mapSource).jsonString();
-                    Map mapDest = JsonPath.parse(strSource).read("$");
-                    // only care about JS functions for treating specially
-                    retainRootKeyValuesWhichAreFunctions(mapSource, mapDest, false);
+                    Map mapDest;
+                    try {
+                        String strSource = JsonPath.parse(mapSource).jsonString();
+                        mapDest = JsonPath.parse(strSource).read("$");
+                        // only care about JS functions for treating specially
+                        retainRootKeyValuesWhichAreFunctions(mapSource, mapDest, false);
+                    } catch (Throwable t) { // json serialization failed, fall-back
+                        mapDest = new LinkedHashMap(mapSource);
+                    }
                     return new ScriptValue(mapDest);
                 } else {
                     return new ScriptValue(new LinkedHashMap(getValue(Map.class)));
@@ -338,6 +345,17 @@ public class ScriptValue {
         }
     }
 
+    public String getAsStringRemovingCyclicReferences() {
+        switch (type) {
+            case JSON:
+            case MAP:
+                Map map = JsonUtils.removeCyclicReferences(getAsMap());
+                return JsonUtils.toJsonDoc(map).jsonString();
+            default:
+                return getAsString();
+        }
+    }
+
     public String getAsString() {
         switch (type) {
             case NULL:
@@ -440,7 +458,8 @@ public class ScriptValue {
         if (value instanceof ScriptObjectMirror) {
             ScriptObjectMirror som = (ScriptObjectMirror) value;
             if (!som.isFunction()) {
-                value = JsonUtils.toJsonDoc(value).read("$"); // results in Map or List
+                Object o = JsonUtils.nashornObjectToJavaJSON(value);
+                value = JsonPath.parse(o).read("$"); // results in Map or List
                 if (value instanceof Map) {
                     Map map = (Map) value;
                     retainRootKeyValuesWhichAreFunctions(som, map, true);

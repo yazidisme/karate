@@ -5,7 +5,7 @@
     <parent>
         <groupId>com.intuit.karate</groupId>
         <artifactId>karate-parent</artifactId>
-        <version>0.9.5</version>
+        <version>0.9.6</version>
     </parent>
     <artifactId>karate-jersey</artifactId>
     <packaging>jar</packaging>
@@ -19,6 +19,12 @@
             <groupId>com.intuit.karate</groupId>
             <artifactId>karate-core</artifactId>
             <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.core</groupId>
+                    <artifactId>jersey-common</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>        
         <dependency>
             <groupId>org.glassfish.jersey.core</groupId>

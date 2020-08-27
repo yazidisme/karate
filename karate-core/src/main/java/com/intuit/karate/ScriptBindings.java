@@ -26,6 +26,7 @@ package com.intuit.karate;
 import com.intuit.karate.core.ScenarioContext;
 import com.intuit.karate.core.ScriptBridge;
 import com.intuit.karate.exception.KarateAbortException;
+import com.intuit.karate.exception.KarateFailException;
 import com.intuit.karate.exception.KarateFileNotFoundException;
 import java.io.File;
 import java.util.Collection;
@@ -48,14 +49,6 @@ import javax.script.ScriptEngineManager;
  */
 public class ScriptBindings implements Bindings {
 
-    // all threads will share this ! thread isolation is via Bindings (this class)
-    private static final ScriptEngine NASHORN = new ScriptEngineManager(null).getEngineByName("nashorn");
-
-    public final ScriptBridge bridge;
-
-    private final ScriptValueMap vars;
-    public final Map<String, Object> adds;
-
     public static final String KARATE = "karate";
     public static final String KARATE_ENV = "karate.env";
     public static final String KARATE_CONFIG_DIR = "karate.config.dir";
@@ -66,6 +59,8 @@ public class ScriptBindings implements Bindings {
     private static final String KARATE_BASE_JS = KARATE_DASH_BASE + DOT_JS;
     public static final String READ = "read";
     public static final String DRIVER = "driver";
+    public static final String ROBOT = "robot";
+    public static final String KEY = "Key";
     public static final String SUREFIRE_REPORTS = "surefire-reports";
 
     // netty / test-doubles
@@ -75,13 +70,25 @@ public class ScriptBindings implements Bindings {
     public static final String ACCEPT_CONTAINS = "acceptContains";
     public static final String HEADER_CONTAINS = "headerContains";
     public static final String PARAM_VALUE = "paramValue";
+    public static final String PARAM_EXISTS = "paramExists";
     public static final String PATH_PARAMS = "pathParams";
+    public static final String PATH_MATCH_SCORES = "pathMatchScores";
+    public static final String METHOD_MATCH = "methodMatch";
+    public static final String HEADERS_MATCH_SCORE = "headersMatchScore";
+    public static final String QUERY_MATCH_SCORE = "queryMatchScore";
     public static final String BODY_PATH = "bodyPath";
     public static final String SERVER_PORT = "serverPort";
 
+    // all threads will share this ! thread isolation is via Bindings (this class)
+    private static final ScriptEngine NASHORN = new ScriptEngineManager(null).getEngineByName("nashorn");
+
+    public final ScriptBridge bridge;
+    private final ScriptValueMap vars;
+    public final Map<String, Object> adds;
+
     public ScriptBindings(ScenarioContext context) {
         this.vars = context.vars;
-        this.adds = new HashMap(8); // read, karate, self, root, parent, nashorn.global, driver, responseBytes
+        this.adds = new HashMap(10); // read, karate, self, root, parent, nashorn.global, driver, robot, responseBytes
         bridge = new ScriptBridge(context);
         adds.put(KARATE, bridge);
         adds.put(READ, context.read);
@@ -140,11 +147,12 @@ public class ScriptBindings implements Bindings {
         try {
             Object o = bindings == null ? NASHORN.eval(exp) : NASHORN.eval(exp, bindings);
             return new ScriptValue(o);
-        } catch (KarateAbortException | KarateFileNotFoundException ke) {
-            throw ke; // reduce log bloat for common file-not-found situation / handle karate.abort()
+        } catch (KarateFailException | KarateAbortException | KarateFileNotFoundException ke) {
+            throw ke; // reduce log bloat for common file-not-found situation / handle karate.abort() / karate.fail()
         } catch (Exception e) {
-            String append = e.getMessage() == null ? exp : e.getMessage();
-            throw new RuntimeException("javascript evaluation failed: " + exp + ", " + append, e);
+            String message = e.toString();
+            message = message + "\nstack trace: " + e.getStackTrace()[0];
+            throw new RuntimeException("evaluation (js) failed: " + exp + ", " + message, e);
         }
     }
 

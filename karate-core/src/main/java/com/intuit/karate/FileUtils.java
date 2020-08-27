@@ -27,7 +27,6 @@ import com.intuit.karate.core.ScenarioContext;
 import com.intuit.karate.core.Feature;
 import com.intuit.karate.core.FeatureParser;
 import com.intuit.karate.exception.KarateFileNotFoundException;
-import com.intuit.karate.shell.StopListenerThread;
 import com.jayway.jsonpath.DocumentContext;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -67,6 +66,7 @@ public class FileUtils {
     private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(FileUtils.class);
 
     public static final Charset UTF8 = StandardCharsets.UTF_8;
+    public static final byte[] EMPTY_BYTES = new byte[]{};
 
     private static final String CLASSPATH = "classpath";
 
@@ -182,7 +182,7 @@ public class FileUtils {
         return feature;
     }
 
-    private static Resource toResource(String path, ScenarioContext context) {
+    public static Resource toResource(String path, ScenarioContext context) {
         if (isClassPath(path)) {
             return new Resource(context, path);
         } else if (isFilePath(path)) {
@@ -317,8 +317,9 @@ public class FileUtils {
             if (file.getParentFile() != null) {
                 file.getParentFile().mkdirs();
             }
+            // try with resources, so will be closed automatically
             try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(data);
+                fos.write(data);                
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -665,23 +666,6 @@ public class FileUtils {
         }
         String command = System.getProperty("sun.java.command", "");
         return command.contains("org.gradle.") ? "build" : "target";
-    }
-
-    public static boolean waitForSocket(int port) {
-        StopListenerThread waiter = new StopListenerThread(port, () -> {
-            LOGGER.info("*** exited socket wait succesfully");
-        });
-        waiter.start();
-        port = waiter.getPort();
-        System.out.println("*** waiting for socket, type the command below:\ncurl http://localhost:"
-                + port + "\nin a new terminal (or open the URL in a web-browser) to proceed ...");
-        try {
-            waiter.join();
-            return true;
-        } catch (Exception e) {
-            LOGGER.warn("*** wait thread failed: {}", e.getMessage());
-            return false;
-        }
     }
 
     public static enum OsType {

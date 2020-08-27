@@ -34,6 +34,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -41,9 +42,12 @@ import java.util.Map;
  */
 public class ScenarioExecutionUnit implements Runnable {
 
+    private static final org.slf4j.Logger LOGGER = LoggerFactory.getLogger(ScenarioExecutionUnit.class);
+
     public final Scenario scenario;
-    private final ExecutionContext exec;    
+    private final ExecutionContext exec;
     public final ScenarioResult result;
+    private final boolean reportDisabled;
     private boolean executed = false;
 
     private Collection<ExecutionHook> hooks;
@@ -57,6 +61,11 @@ public class ScenarioExecutionUnit implements Runnable {
     private Step currentStep;
 
     private LogAppender appender;
+    private Throwable error;
+
+    public Throwable getError() {
+        return error;
+    }
 
     // for debug
     public Step getCurrentStep() {
@@ -81,13 +90,14 @@ public class ScenarioExecutionUnit implements Runnable {
         this.exec = exec;
         result = new ScenarioResult(scenario, results);
         if (backgroundContext != null) { // re-build for dynamic scenario
-            ScenarioInfo info = scenario.toInfo(exec.featureContext.feature.getPath());
-            ScenarioContext context = backgroundContext.copy(info);
+            ScenarioContext context = backgroundContext.copy();
             actions = new StepActions(context);
         }
         if (exec.callContext.perfMode) {
             appender = LogAppender.NO_OP;
-        }        
+        }
+        Tags tags = scenario.getTagsEffective();
+        reportDisabled = tags.valuesFor("report").isAnyOf("false");
     }
 
     public ScenarioContext getContext() {
@@ -139,15 +149,19 @@ public class ScenarioExecutionUnit implements Runnable {
             logger.setAppender(appender);
             actions.context.setLogger(logger);
         }
-        // this is not done in the constructor as we need to be on the "executor" thread
-        hooks = exec.callContext.resolveHooks();
-        // before-scenario hook, important: actions.context will be null if initFailed
-        if (!initFailed && hooks != null) {
-            try {
-                hooks.forEach(h -> h.beforeScenario(scenario, actions.context));
-            } catch (Exception e) {
-                initFailed = true;
-                result.addError("beforeScenario hook failed", e);
+        if (!initFailed) { // actions will be null otherwise
+            // this flag is used to suppress logs in the http client if needed
+            actions.context.setReportDisabled(reportDisabled);
+            // this is not done in the constructor as we need to be on the "executor" thread
+            hooks = exec.callContext.resolveHooks();
+            // before-scenario hook, important: actions.context will be null if initFailed
+            if (hooks != null) {
+                try {
+                    hooks.forEach(h -> h.beforeScenario(scenario, actions.context));
+                } catch (Exception e) {
+                    initFailed = true;
+                    result.addError("beforeScenario hook failed", e);
+                }
             }
         }
         if (initFailed) {
@@ -204,7 +218,7 @@ public class ScenarioExecutionUnit implements Runnable {
                 return null;
             }
         }
-        boolean hidden = step.isPrefixStar() && !step.isPrint() && !actions.context.getConfig().isShowAllSteps();
+        boolean hidden = reportDisabled || (step.isPrefixStar() && !step.isPrint() && !actions.context.getConfig().isShowAllSteps());
         if (stopped) {
             Result stepResult;
             if (aborted && actions.context.getConfig().isAbortedStepsShouldPass()) {
@@ -216,7 +230,9 @@ public class ScenarioExecutionUnit implements Runnable {
             sr.setHidden(hidden);
             return afterStep(sr);
         } else {
+            Engine.THREAD_CONTEXT.set(actions.context);
             Result execResult = Engine.executeStep(step, actions);
+            Engine.THREAD_CONTEXT.set(null);
             List<FeatureResult> callResults = actions.context.getAndClearCallResults();
             // embed collection for each step happens here
             List<Embed> embeds = actions.context.getAndClearEmbeds();
@@ -224,11 +240,11 @@ public class ScenarioExecutionUnit implements Runnable {
                 aborted = true;
                 actions.context.logger.debug("abort at {}", step.getDebugInfo());
             } else if (execResult.isFailed()) {
-                actions.context.setScenarioError(execResult.getError());
+                error = execResult.getError();
             }
             // log appender collection for each step happens here
             String stepLog = StringUtils.trimToNull(appender.collect());
-            boolean showLog = actions.context.getConfig().isShowLog();
+            boolean showLog = !reportDisabled && actions.context.getConfig().isShowLog();
             StepResult sr = new StepResult(step, execResult, stepLog, embeds, callResults);
             sr.setHidden(hidden);
             sr.setShowLog(showLog);
@@ -269,14 +285,18 @@ public class ScenarioExecutionUnit implements Runnable {
             stepIndex = 0;
         }
     }
-    
+
     public void stepReset() {
         stopped = false;
         stepIndex--;
-        if (stepIndex < 0) {
+        if (stepIndex < 0) { // maybe not required, but debug is hard
             stepIndex = 0;
-        }        
-    }    
+        }
+    }
+
+    public void stepProceed() {
+        stopped = false;
+    }
 
     private int nextStepIndex() {
         return stepIndex++;
@@ -287,25 +307,32 @@ public class ScenarioExecutionUnit implements Runnable {
         if (appender == null) { // not perf, not ui
             appender = APPENDER.get();
         }
-        if (steps == null) {
-            init();
-        }
-        int count = steps.size();
-        int index = 0;
-        while ((index = nextStepIndex()) < count) {
-            Step step = steps.get(index);
-            lastStepResult = execute(step);
-            if (lastStepResult == null) { // debug step-back !
-                continue;
+        try { // make sure we call next() even on crashes
+            // and operate countdown latches, else we may hang the parallel runner
+            if (steps == null) {
+                init();
             }
-            result.addStepResult(lastStepResult);
-            if (lastStepResult.isStopped()) {
-                stopped = true;
+            int count = steps.size();
+            int index = 0;
+            while ((index = nextStepIndex()) < count) {
+                Step step = steps.get(index);
+                lastStepResult = execute(step);
+                if (lastStepResult == null) { // debug step-back !
+                    continue;
+                }
+                result.addStepResult(lastStepResult);
+                if (lastStepResult.isStopped()) {
+                    stopped = true;
+                }
             }
-        }
-        stop();
-        if (next != null) {
-            next.run();
+            stop();
+        } catch (Exception e) {            
+            result.addError("scenario execution failed", e);
+            LOGGER.error("scenario execution failed: {}", e.getMessage());
+        } finally {
+            if (next != null) {
+                next.run();
+            }
         }
     }
 

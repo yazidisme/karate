@@ -34,9 +34,9 @@ public interface Actions {
 
     void assertTrue(String expression);
 
-    void call(String name, String arg);
+    void call(String line);
 
-    void callonce(String name, String arg);
+    void callonce(String line);
     
     void csv(String name, String expression);
 
@@ -80,9 +80,7 @@ public interface Actions {
 
     void headers(String expr);
 
-    void matchDocstring(String expression, String operators, String rhs);
-
-    void match(String expression, String operators, String rhs);        
+    void match(String expression, String op1, String op2, String rhs);        
 
     void method(String method);
     

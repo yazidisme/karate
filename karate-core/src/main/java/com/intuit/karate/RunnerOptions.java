@@ -23,7 +23,6 @@
  */
 package com.intuit.karate;
 
-import cucumber.api.CucumberOptions;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -44,7 +43,7 @@ public class RunnerOptions {
 
     private static final org.slf4j.Logger logger = LoggerFactory.getLogger(RunnerOptions.class);
 
-    private static final Pattern COMMAND_NAME = Pattern.compile("--name (\\^.+?\\$)");
+    private static final Pattern COMMAND_NAME = Pattern.compile("--name \"?([^$\"]+[^ \"]+)\"?");
 
     @Option(names = {"-h", "--help"}, usageHelp = true, description = "display this help message")
     boolean help;
@@ -57,10 +56,13 @@ public class RunnerOptions {
 
     @Option(names = {"-n", "--name"}, description = "name of scenario to run")
     String name;
-    
+
+    @Option(names = {"-e", "--env"}, description = "value of 'karate.env'")
+    String env;
+
     @Option(names = {"-d", "--debug"}, arity = "0..1", defaultValue = "-1", fallbackValue = "0",
             description = "debug mode (optional port else dynamically chosen)")
-    int debugPort;    
+    int debugPort;
 
     @Parameters(description = "one or more tests (features) or search-paths to run")
     List<String> features;
@@ -89,7 +91,7 @@ public class RunnerOptions {
         }
         features.add(feature);
     }
-    
+
     public List<String> getFeatures() {
         return features;
     }
@@ -100,7 +102,7 @@ public class RunnerOptions {
 
     public int getDebugPort() {
         return debugPort;
-    }        
+    }
 
     public static RunnerOptions parseStringArgs(String[] args) {
         RunnerOptions options = CommandLine.populateCommand(new RunnerOptions(), args);
@@ -129,37 +131,29 @@ public class RunnerOptions {
         String[] args = line.split("\\s+");
         RunnerOptions options = parseStringArgs(args);
         options.name = nameTemp;
+        // a little easier for things like the vs code ide to say "-e smoke" etc
+        if (options.env != null) { 
+            System.setProperty("karate.env", options.env);
+        }
         return options;
     }
 
-    public static RunnerOptions fromAnnotationAndSystemProperties(Class<?> clazz) {
-        List<String> tags = null;
-        List<String> features = null;
-        KarateOptions ko = clazz.getAnnotation(KarateOptions.class);
-        if (ko == null) {
-            CucumberOptions co = clazz.getAnnotation(CucumberOptions.class);
-            if (co != null) {
-                tags = Arrays.asList(co.tags());
-                features = Arrays.asList(co.features());
+    public static RunnerOptions fromAnnotationAndSystemProperties(List<String> features, List<String> tags, Class<?> clazz) {
+        KarateOptions ko = clazz == null ? null : clazz.getAnnotation(KarateOptions.class);
+        if (ko != null) {
+            if (ko.tags().length > 0) {
+                tags = Arrays.asList(ko.tags());
             }
-        } else {
-            tags = Arrays.asList(ko.tags());
-            features = Arrays.asList(ko.features());
+            if (ko.features().length > 0) {
+                features = Arrays.asList(ko.features());
+            }
         }
-        return fromAnnotationAndSystemProperties(features, tags, clazz);
-    }
-
-    public static RunnerOptions fromAnnotationAndSystemProperties(List<String> features, List<String> tags, Class clazz) {
         if (clazz != null && (features == null || features.isEmpty())) {
             String relative = FileUtils.toRelativeClassPath(clazz);
             features = Collections.singletonList(relative);
         }
         String line = System.getProperty("karate.options");
         line = StringUtils.trimToNull(line);
-        if (line == null) {
-            line = System.getProperty("cucumber.options");
-            line = StringUtils.trimToNull(line);
-        }
         RunnerOptions options;
         if (line == null) {
             options = new RunnerOptions();

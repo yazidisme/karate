@@ -1,5 +1,5 @@
 dev:
-mvn versions:set -DnewVersion=1.0.0
+mvn versions:set -DnewVersion=2.0.0
 mvn versions:commit
 (edit examples/jobserver/pom.xml)
 (edit examples/gatling/pom.xml)
@@ -19,6 +19,13 @@ jar:
 cd karate-netty
 mvn install -P fatjar
 https://bintray.com/ptrthomas/karate
+(upload to github release notes)
+
+robot:
+cd karate-robot
+mvn install -P fatjar
+https://bintray.com/ptrthomas/karate
+(upload to github release notes)
 
 docker:
 (double check if the below pom files are updated for the version

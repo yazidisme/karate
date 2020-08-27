@@ -3,9 +3,7 @@ package com.intuit.karate.gatling
 import java.util.Collections
 import java.util.function.Consumer
 
-import akka.actor.{Actor, ActorRef, ActorSystem, Props}
-import akka.pattern.ask
-import akka.util.Timeout
+import akka.actor.ActorSystem
 import com.intuit.karate.{Results, Runner}
 import com.intuit.karate.core._
 import com.intuit.karate.http.HttpRequestBuilder
@@ -16,37 +14,21 @@ import io.gatling.core.session.Session
 import io.gatling.core.stats.StatsEngine
 
 import scala.collection.JavaConverters._
-import scala.concurrent.Await
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.{Duration, FiniteDuration, MILLISECONDS}
-
-class KarateActor extends Actor {
-  override def receive: Receive = {
-    case m: Runnable => {
-      m.run()
-      context.stop(self)
-    }
-    case m: FiniteDuration => {
-      val waiter = sender()
-      val task: Runnable = () => waiter ! Nil
-      context.system.scheduler.scheduleOnce(m, self, task)
-    }
-  }
-}
+import scala.concurrent.{Await, ExecutionContextExecutor, Future}
+import scala.concurrent.duration.{Duration, MILLISECONDS}
 
 class KarateAction(val name: String, val tags: Seq[String], val protocol: KarateProtocol, val system: ActorSystem,
                    val statsEngine: StatsEngine, val clock: Clock, val next: Action) extends ExitableAction {
 
-  def getActor(): ActorRef = {
-    val actorName = "karate-" + protocol.actorCount.incrementAndGet()
-    system.actorOf(Props[KarateActor], actorName)
-  }
-
   def pause(time: Int) = {
     val duration = Duration(time, MILLISECONDS)
-    implicit val timeout = Timeout(Duration(time + 5000, MILLISECONDS))
-    val future = getActor() ? duration
-    Await.result(future, Duration.Inf)
+    try {
+      Await.result(Future.never, duration)
+    } catch {
+      // we do all this to achieve a non-blocking "pause"
+      // and the timeout exception will ALWAYS be thrown
+      case e: Throwable => // do nothing
+    }
   }
 
   override def execute(session: Session) = {
@@ -85,7 +67,8 @@ class KarateAction(val name: String, val tags: Seq[String], val protocol: Karate
 
     }
 
-    val asyncSystem: Consumer[Runnable] = r => getActor() ! r
+    implicit val executor: ExecutionContextExecutor = system.dispatcher
+    val asyncSystem: Consumer[Runnable] = r => Future { r.run() }
     val pauseFunction: Consumer[java.lang.Number] = t => pause(t.intValue())
     val asyncNext: Runnable = () => next ! session
     val attribs: Object = (session.attributes + ("userId" -> session.userId) + ("pause" -> pauseFunction))

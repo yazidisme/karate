@@ -5,13 +5,13 @@
     <parent>
         <groupId>com.intuit.karate</groupId>
         <artifactId>karate-parent</artifactId>
-        <version>0.9.5</version>
+        <version>0.9.6</version>
     </parent>
     <artifactId>karate-apache</artifactId>
     <packaging>jar</packaging>
     
     <properties>
-        <apache.httpcomponents.version>4.5.11</apache.httpcomponents.version>
+        <apache.httpcomponents.version>4.5.12</apache.httpcomponents.version>
     </properties>                              
 
     <dependencies>
@@ -43,7 +43,9 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>jcl-over-slf4j</artifactId>
+            <!-- this is tied to logback-classic version in karate-parent -->
             <version>1.7.25</version>
+            <scope>runtime</scope>
         </dependency>
 
     </dependencies>          

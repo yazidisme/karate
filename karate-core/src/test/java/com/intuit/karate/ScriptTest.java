@@ -63,6 +63,14 @@ public class ScriptTest {
         assertEquals(ScriptValue.Type.PRIMITIVE, value.getType());
         assertEquals(3.0, value.getValue());
     }
+    
+    @Test
+    public void testMatchPrimitiveStrings() {
+        ScenarioContext ctx = getContext();
+        ctx.vars.put("a", "3");
+        ctx.vars.put("b", 3);  
+        assertFalse(Script.matchNamed(MatchType.EQUALS, "a", null, "b", ctx).pass);
+    }    
 
     @Test
     public void testEvalMapsAndLists() {
@@ -389,15 +397,40 @@ public class ScriptTest {
         assertTrue(Script.matchJsonOrObject(MatchType.NOT_CONTAINS, myJson, "$.foo", "[{bar: 9, baz: 'z'}, {bar: 99, baz: 'zz'}]", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_ONLY, myJson, "$.foo", "[{bar: 1, baz: 'a'}, {bar: 2, baz: 'b'}, {bar:3, baz: 'c'}]", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_ANY, myJson, "$.foo", "[{bar: 9, baz: 'z'}, {bar: 2, baz: 'b'}]", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1}, {bar: 2}, {bar:3}]", ctx).pass);
+
         // shuffle
         assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_ONLY, myJson, "$.foo", "[{bar: 2, baz: 'b'}, {bar:3, baz: 'c'}, {bar: 1, baz: 'a'}]", ctx).pass);
         assertFalse(Script.matchJsonOrObject(MatchType.CONTAINS_ONLY, myJson, "$.foo", "[{bar: 1, baz: 'a'}, {bar: 2, baz: 'b'}]", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.EACH_EQUALS, myJson, "$.foo", "{bar:'#number', baz:'#string'}", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.EACH_CONTAINS, myJson, "$.foo", "{bar:'#number'}", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.EACH_CONTAINS, myJson, "$.foo", "{baz:'#string'}", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1}, {bar: 2}, {bar:3}]", ctx).pass);
         assertTrue(Script.matchJsonOrObject(MatchType.EACH_NOT_CONTAINS, myJson, "$.foo", "{baz:'z'}", ctx).pass);
         assertFalse(Script.matchJsonOrObject(MatchType.EACH_NOT_CONTAINS, myJson, "$.foo", "{baz:'a'}", ctx).pass);
         assertFalse(Script.matchJsonOrObject(MatchType.EACH_EQUALS, myJson, "$.foo", "{bar:'#? _ < 3',  baz:'#string'}", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$", "{foo: [{bar: 1}, {bar: 2}, {bar:3}]}", ctx).pass);
+
+    }
+
+    @Test
+    public void testMatchContainsDeep() {
+
+        DocumentContext doc = JsonPath.parse("{ foo: [{bar: 1, baz: 'a'}, {bar: 2, baz: 'b'}, {bar:3, baz: 'c'}], eoo: { doo: { car: 1, caz: 'a'} } }");
+        ScenarioContext ctx = getContext();
+        ctx.vars.put("myJson", doc);
+        ScriptValue myJson = ctx.vars.get("myJson");
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1}, {bar: 2}, {bar:3}]", ctx).pass);
+        assertFalse(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1}, {bar: 4}, {bar:3}]", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1, baz: 'a'}]", ctx).pass);
+        assertFalse(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{bar: 1, baz: 'a', 'baq': 'b'}]", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{baz: 'a'}, {bar: 2}, {bar:3, baz: 'c'}]", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$.foo", "[{baz: 'a'}, {bar:3, baz: 'c'}]", ctx).pass);
+
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$", "{eoo: '#ignore'}", ctx).pass);
+        assertTrue(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$", "{eoo: { doo: {car: 1} } }", ctx).pass);
+        assertFalse(Script.matchJsonOrObject(MatchType.CONTAINS_DEEP, myJson, "$", "{eoo: { doo: {car: 'a'} } }", ctx).pass);
+
     }
 
     @Test
@@ -1326,7 +1359,6 @@ public class ScriptTest {
         Script.assign("foo", "<records>\n  <record>a</record>\n  <record>b</record>\n  <record>c</record>\n</records>", ctx);
         Script.assign("count", "get foo count(//record)", ctx);
         assertTrue(Script.matchNamed(MatchType.EQUALS, "count", null, "3", ctx).pass);
-        assertTrue(Script.matchNamed(MatchType.EQUALS, "count", null, "3", ctx).pass);
     }
 
     @Test
@@ -1685,8 +1717,8 @@ public class ScriptTest {
     @Test
     public void testBinaryMatching() {
         ScenarioContext ctx = getContext();
-        Script.assign(AssignType.BYTE_ARRAY, "data", "read('file:src/main/resources/karate-logo.png')", ctx, true);
-        assertTrue(Script.matchNamed(MatchType.EQUALS, "data", null, "read('file:src/main/resources/karate-logo.png')", ctx).pass);
+        Script.assign(AssignType.BYTE_ARRAY, "data", "read('file:src/main/resources/res/karate-logo.png')", ctx, true);
+        assertTrue(Script.matchNamed(MatchType.EQUALS, "data", null, "read('file:src/main/resources/res/karate-logo.png')", ctx).pass);
     }
 
     @Test
@@ -1710,8 +1742,9 @@ public class ScriptTest {
         Script.assign("fun", "function(){ return { a: 1 } }", ctx);
         assertTrue(Script.matchNamed(MatchType.EQUALS, "fun()", null, "{ a: 1 }", ctx).pass);
         assertTrue(Script.matchNamed(MatchType.EQUALS, "fun().a", null, "1", ctx).pass);
+        assertTrue(Script.matchNamed(MatchType.EQUALS, "(fun().a)", null, "1", ctx).pass);
     }
-
+    
     @Test
     public void testKarateToJson() {
         ScenarioContext ctx = getContext();
@@ -1723,6 +1756,18 @@ public class ScriptTest {
         assertTrue(Script.matchNamed(MatchType.EQUALS, "foo", null, "{ foo: null, bar: 10 }", ctx).pass);
         assertTrue(Script.matchNamed(MatchType.EQUALS, "bar", null, "{ bar: 10 }", ctx).pass);
     }
+
+    @Test
+    public void testMatchJavaBeanPropertyOhLhs() {
+        ScenarioContext ctx = getContext();
+        Script.assign("SP", "Java.type('com.intuit.karate.SimplePojo')", ctx);
+        Script.assign("sp", "new SP()", ctx);
+        Script.evalJsExpression("sp.bar = 10", ctx);
+        Script.assign("foo", "karate.toJson(sp)", ctx);
+        Script.assign("bar", "karate.toJson(sp, true)", ctx);
+        assertTrue(Script.matchNamed(MatchType.EQUALS, "sp.foo", null, "null", ctx).pass);
+        assertTrue(Script.matchNamed(MatchType.EQUALS, "sp.bar", null, "10", ctx).pass);
+    }    
 
     @Test
     public void notEqualMatchTest(){

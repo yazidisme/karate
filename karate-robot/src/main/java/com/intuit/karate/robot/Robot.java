@@ -23,270 +23,166 @@
  */
 package com.intuit.karate.robot;
 
-import com.intuit.karate.FileUtils;
-import com.intuit.karate.ScriptValue;
-import com.intuit.karate.core.ScenarioContext;
-import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Image;
-import java.awt.Rectangle;
-import java.awt.Toolkit;
-import java.awt.event.InputEvent;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.util.Collections;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
+import com.intuit.karate.core.AutoDef;
+import com.intuit.karate.core.Plugin;
+import java.util.List;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author pthomas3
  */
-public class Robot {
+public interface Robot extends Plugin {
 
-    private static final Logger logger = LoggerFactory.getLogger(Robot.class);
+    static final List<String> METHOD_NAMES = Plugin.methodNames(Robot.class);
 
-    public final ScenarioContext context;
-    public final java.awt.Robot robot;
-    public final Toolkit toolkit;
-    public final Dimension dimension;
-    public final Map<String, Object> options;
-    public final boolean highlight;
-    public final int highlightDuration;
-    public final int retryCount;
-    public final int retryInterval;
-
-    public String basePath;
-
-    private <T> T get(String key, T defaultValue) {
-        T temp = (T) options.get(key);
-        return temp == null ? defaultValue : temp;
+    @Override
+    default List<String> methodNames() {
+        return METHOD_NAMES;
     }
 
-    public Robot(ScenarioContext context) {
-        this(context, Collections.EMPTY_MAP);
-    }
+    @AutoDef
+    Robot retry();
 
-    public Robot(ScenarioContext context, Map<String, Object> options) {
-        this.context = context;
-        try {
-            this.options = options;
-            basePath = get("basePath", "classpath:");
-            highlight = get("highlight", false);
-            highlightDuration = get("highlightDuration", 1000);
-            retryCount = get("retryCount", 3);
-            retryInterval = get("retryInterval", 2000);
-            toolkit = Toolkit.getDefaultToolkit();
-            dimension = toolkit.getScreenSize();
-            robot = new java.awt.Robot();
-            robot.setAutoDelay(40);
-            robot.setAutoWaitForIdle(true);
-            String app = (String) options.get("app");
-            if (app != null) {
-                switchTo(app);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
+    @AutoDef
+    Robot retry(int count);
 
-    public <T> T retry(Supplier<T> action, Predicate<T> condition, String logDescription) {
-        long startTime = System.currentTimeMillis();
-        int count = 0, max = retryCount;
-        T result;
-        boolean success;
-        do {
-            if (count > 0) {
-                logger.debug("{} - retry #{}", logDescription, count);
-                delay(retryInterval);
-            }
-            result = action.get();
-            success = condition.test(result);
-        } while (!success && count++ < max);
-        if (!success) {
-            long elapsedTime = System.currentTimeMillis() - startTime;
-            logger.warn("failed after {} retries and {} milliseconds", (count - 1), elapsedTime);
-        }
-        return result;
-    }
+    @AutoDef
+    Robot retry(Integer count, Integer interval);
 
-    public void setBasePath(String basePath) {
-        this.basePath = basePath;
-    }
+    @AutoDef
+    Robot delay(int millis);
 
-    public byte[] read(String path) {
-        if (basePath != null) {
-            String slash = basePath.endsWith(":") ? "" : "/";
-            path = basePath + slash + path;
-        }
-        ScriptValue sv = FileUtils.readFile(path, context);
-        return sv.getAsByteArray();
-    }
+    @AutoDef
+    Robot click();
 
-    public Robot delay(int millis) {
-        robot.delay(millis);
-        return this;
-    }
+    @AutoDef
+    Robot click(int num);
+
+    @AutoDef
+    Robot doubleClick();
     
-    private static int mask(int num) {
-        switch (num) {
-            case 2: return InputEvent.BUTTON2_DOWN_MASK;
-            case 3: return InputEvent.BUTTON3_DOWN_MASK;
-            default: return InputEvent.BUTTON1_DOWN_MASK;
-        }         
-    }
+    @AutoDef
+    Robot rightClick();    
+
+    @AutoDef
+    Robot press();
+
+    @AutoDef
+    Robot release();
+
+    @AutoDef
+    Robot input(String[] values);
     
-    public Robot click() {             
-        return click(1);        
-    }    
-
-    public Robot click(int num) {
-        int mask = mask(num);
-        robot.mousePress(mask);
-        robot.mouseRelease(mask);
-        return this;
-    }
-
-    public Robot input(char s) {
-        return input(Character.toString(s));
-    }
-
-    public Robot input(String mod, char s) {
-        return input(mod, Character.toString(s));
-    }
-
-    public Robot input(char mod, String s) {
-        return input(Character.toString(mod), s);
-    }
-
-    public Robot input(char mod, char s) {
-        return input(Character.toString(mod), Character.toString(s));
-    }
-
-    public Robot input(String mod, String s) { // TODO refactor
-        for (char c : mod.toCharArray()) {
-            int[] codes = RobotUtils.KEY_CODES.get(c);
-            if (codes == null) {
-                logger.warn("cannot resolve char: {}", c);
-                robot.keyPress(c);
-            } else {
-                robot.keyPress(codes[0]);
-            }
-        }
-        input(s);
-        for (char c : mod.toCharArray()) {
-            int[] codes = RobotUtils.KEY_CODES.get(c);
-            if (codes == null) {
-                logger.warn("cannot resolve char: {}", c);
-                robot.keyRelease(c);
-            } else {
-                robot.keyRelease(codes[0]);
-            }
-        }
-        return this;
-    }
-
-    public Robot input(String s) {
-        for (char c : s.toCharArray()) {
-            int[] codes = RobotUtils.KEY_CODES.get(c);
-            if (codes == null) {
-                logger.warn("cannot resolve char: {}", c);
-                robot.keyPress(c);
-                robot.keyRelease(c);
-            } else if (codes.length > 1) {
-                robot.keyPress(codes[0]);
-                robot.keyPress(codes[1]);
-                robot.keyRelease(codes[1]);
-                robot.keyRelease(codes[0]);
-            } else {
-                robot.keyPress(codes[0]);
-                robot.keyRelease(codes[0]);
-            }
-        }
-        return this;
-    }
-
-    public BufferedImage capture() {
-        int width = dimension.width;
-        int height = dimension.height;
-        Image image = robot.createScreenCapture(new Rectangle(0, 0, width, height));
-        BufferedImage bi = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
-        Graphics g = bi.createGraphics();
-        g.drawImage(image, 0, 0, width, height, null);
-        return bi;
-    }
-
-    public File captureAndSave(String path) {
-        BufferedImage image = capture();
-        File file = new File(path);
-        RobotUtils.save(image, file);
-        return file;
-    }
+    @AutoDef
+    Robot input(String[] values, int delay);  
     
-    public Region move(int x, int y) {
-        return new Region(x, y).with(this).move();        
-    }
+    @AutoDef
+    Robot input(String chars, int delay);
+
+    @AutoDef
+    Robot input(String value);
+
+    @AutoDef
+    Element input(String locator, String value);
+
+    @AutoDef
+    byte[] screenshot();
+
+    @AutoDef
+    byte[] screenshotActive();
     
-    public Region click(int x, int y) {
-        return move(x, y).click();
-    }    
+    @AutoDef
+    Robot move(int x, int y);
 
-    public Region move(String path) {
-        return find(path).move();
-    }    
+    @AutoDef
+    Robot click(int x, int y);
 
-    public Region click(String path) {
-        return find(path).click();
-    }
+    @AutoDef
+    Element highlight(String locator);
+    
+    @AutoDef
+    List<Element> highlightAll(String locator);    
 
-    public Region find(String path) {
-        return find(read(path)).with(this);
-    }
+    @AutoDef
+    Element locate(String locator);
+    
+    @AutoDef
+    List<Element> locateAll(String locator);
 
-    public Region find(byte[] bytes) {
-        AtomicBoolean resize = new AtomicBoolean();
-        Region region = retry(() -> RobotUtils.find(capture(), bytes, resize.getAndSet(true)), r -> r != null, "find by image");
-        if (highlight) {
-            region.highlight(highlightDuration);
-        }
-        return region;
-    }
+    @AutoDef
+    Element optional(String locator);
 
-    public boolean switchTo(String title) {
-        if (title.startsWith("^")) {
-            return switchTo(t -> t.contains(title.substring(1)));
-        }
-        FileUtils.OsType type = FileUtils.getOsType();
-        switch (type) {
-            case LINUX:
-                return RobotUtils.switchToLinuxOs(title);
-            case MACOSX:
-                return RobotUtils.switchToMacOs(title);
-            case WINDOWS:
-                return RobotUtils.switchToWinOs(title);
-            default:
-                logger.warn("unsupported os: {}", type);
-                return false;
-        }
-    }
+    @AutoDef
+    boolean exists(String locator);
 
-    public boolean switchTo(Predicate<String> condition) {
-        FileUtils.OsType type = FileUtils.getOsType();
-        switch (type) {
-            case LINUX:
-                return RobotUtils.switchToLinuxOs(condition);
-            case MACOSX:
-                return RobotUtils.switchToMacOs(condition);
-            case WINDOWS:
-                return RobotUtils.switchToWinOs(condition);
-            default:
-                logger.warn("unsupported os: {}", type);
-                return false;
-        }
-    }
+    @AutoDef
+    Element move(String locator);
+    
+    @AutoDef
+    Element focus(String locator);    
 
+    @AutoDef
+    Element click(String locator);
+    
+    @AutoDef
+    Element select(String locator);
+
+    @AutoDef
+    Element press(String locator);
+
+    @AutoDef
+    Element release(String locator);
+
+    @AutoDef
+    Element window(String title);
+
+    @AutoDef
+    Element window(Predicate<String> condition);
+    
+    @AutoDef
+    boolean windowExists(String locator);
+
+    @AutoDef
+    Element windowOptional(String locator);   
+    
+    @AutoDef
+    Element waitForWindowOptional(String locator);     
+
+    @AutoDef
+    Object waitUntil(Supplier<Object> condition);
+    
+    @AutoDef
+    Object waitUntilOptional(Supplier<Object> condition);    
+
+    @AutoDef
+    Element waitFor(String locator);
+    
+    @AutoDef
+    Element waitForOptional(String locator);    
+
+    @AutoDef
+    Element waitForAny(String locator1, String locator2);
+
+    @AutoDef
+    Element waitForAny(String[] locators);
+    
+    @AutoDef
+    Element activate(String locator);
+    
+    List<Window> getAllWindows(); // purely for debug convenience        
+    
+    Element getActive(); // getter
+    
+    Robot setActive(Element e); // setter    
+
+    Element getRoot(); // getter
+
+    Element getFocused(); // getter
+
+    String getClipboard(); // getter
+    
+    Location getLocation(); // getter
+    
 }

@@ -45,6 +45,18 @@ public class Keys {
     public static boolean isNormal(char c) {
         return c < NULL;
     }
+    
+    public static boolean isModifier(char c) {
+        switch(c) {
+            case CONTROL:
+            case ALT:
+            case SHIFT:
+            case META:
+                return true;
+            default:
+                return false;
+        }
+    }
 
     public static String keyIdentifier(char c) {
         return "\\u" + Integer.toHexString(c | 0x10000).substring(1);
@@ -118,6 +130,7 @@ public class Keys {
         CODES.put(TAB, 9);
         CODES.put(CLEAR, 12);
         CODES.put(NULL, 12); // same as clear
+        CODES.put(RETURN, 13); // same as enter
         CODES.put(ENTER, 13);
         CODES.put(SHIFT, 16);
         CODES.put(CONTROL, 17);

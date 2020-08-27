@@ -9,12 +9,16 @@ import org.junit.AfterClass;
 import org.junit.Test;
 import static org.junit.Assert.*;
 import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author pthomas3
  */
 public class ConsumerUsingMockTest {
+    
+    private static final Logger logger = LoggerFactory.getLogger(ConsumerUsingMockTest.class);
     
     private static FeatureServer server;
     private static Consumer consumer;
@@ -46,7 +50,7 @@ public class ConsumerUsingMockTest {
             }
         });
         synchronized(this) {
-            wait();
+            wait(10000);
         }       
     }
     

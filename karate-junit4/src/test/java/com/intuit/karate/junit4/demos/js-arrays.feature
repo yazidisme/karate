@@ -311,15 +311,47 @@ Scenario: comparing 2 payloads
     * def bar = { baz: 'ban', hello: 'world' }
     * match foo == bar
 
-Scenario: contains will recurse
+Scenario: [contains deep] will recurse nested json
     * def original = { a: 1, b: 2, c: 3, d: { a: 1, b: 2 } }
     * def expected = { a: 1, c: 3, d: { b: 2 } }
-    * match original contains expected
+    * match original !contains expected
+    * match original contains deep expected
 
-Scenario: contains will recurse in reverse !
+Scenario: [contains deep] will recurse nested array
+    * def original = { a: 1, arr: [ { b: 2, c: 3 }, { b: 3, c: 4 } ] }
+    * def expected = { a: 1, arr: [ { b: 2 }, { c: 4 } ] }
+    * match original !contains expected    
+    * match original contains deep expected
+
+Scenario: [contains deep] should not recurse in reverse
     * def original = { "a": { "b": { "c": { "d":1, "e":2 } } } }
     * def compared = { "a": { "b": { "c": { "d":1, "e":2, "f":3 } } } }
     * match original !contains compared
+    * match compared !contains original
+    # * match original !contains deep compared
+    * match compared contains deep original
+
+Scenario: contains deep should support multi-line / docstring r.h.s
+    * def message =
+      """
+      {
+          order_id: 5,
+          products: [
+            { product_id: 100, name: "bicycle" },
+            { product_id: 101, name: "car" }
+          ]
+      }
+      """
+    * match message contains deep
+      """
+      {
+          order_id: 5,
+          products: [
+            { product_id: 101, name: "car" },
+            { product_id: 100, name: "bicycle" }
+          ]
+      }
+      """
 
 Scenario: js eval
     * def temperature = { celsius: 100, fahrenheit: 212 }
@@ -527,9 +559,20 @@ Scenario: contains / not contains
 
 Scenario: match in js
     * def foo = { hello: 'world' }
-    * def result = karate.match(foo, { hello: '#string'} )
-    * match result == { pass: true, message: null }
-    * if (result.pass) karate.log('*** passed')
+    * def res = karate.match(foo, { hello: '#string' } )
+    * match res == { pass: true, message: null }
+    * def res = karate.match(foo, { hello: '#number' } )
+    * match res == { pass: false, message: '#notnull' }
+
+Scenario: advanced match in js
+    * def foo = { a: 1, b: 'foo' }
+    * def res = karate.match("foo contains { a: '#number' }")
+    * match res == { pass: true, message: null }
+    * def res = karate.match("foo == { a: '#number' }")
+    * match res == { pass: false, message: '#notnull' }
+    * def foo = [1, 2, 3]
+    * def res = karate.match("each foo == '#number'")
+    * match res == { pass: true, message: null }
 
 Scenario: karate.os
     * def temp = karate.os
@@ -570,3 +613,13 @@ Scenario: maps - karate.sizeOf() keysOf() valuesOf() appendTo()
     * def foo = { a: 1, b: 2, c: 3 }
     * match karate.sizeOf(foo) == 3
     * match karate.keysOf(foo) == ['a', 'b', 'c']
+
+Scenario: map and repeat should not mangle js arrays
+* def foo = [1, 2]
+* def fun = function(x){ return { x: x, bar: [1, 2] } }
+* def res = karate.map(foo, fun)
+* match res == [{ x: 1, bar: [1, 2]}, { x: 2, bar: [1, 2] }]
+
+* def fun = function(i){ return { foo: [1, 2]} }
+* def bar = karate.repeat(2, fun)
+* match bar == [{ foo: [1, 2] }, { foo: [1, 2] }]

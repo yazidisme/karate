@@ -101,7 +101,7 @@ public class DebugThread implements ExecutionHook, LogAppender {
         if (stepBack) { // don't clear flag yet !
             getContext().getExecutionUnit().stepBack();
             return false; // abort and do not execute step !
-        }        
+        }
         if (stopped) {
             getContext().getExecutionUnit().stepReset();
             return false;
@@ -111,6 +111,7 @@ public class DebugThread implements ExecutionHook, LogAppender {
 
     protected void resume() {
         stopped = false;
+        handler.evaluatePreStep(getContext());
         for (DebugThread dt : handler.THREADS.values()) {
             synchronized (dt) {
                 dt.notify();
@@ -149,9 +150,16 @@ public class DebugThread implements ExecutionHook, LogAppender {
             paused = false;
             return stop("pause");
         } else if (errored) {
-            errored = false;            
-            context.getExecutionUnit().stepReset();
-            return false; // TODO we have to click on the next button twice
+            errored = false; // clear the flag else the debugger will never move past this step
+            if (isStepMode()) {
+                // allow user to skip this step even if it is broken
+                context.getExecutionUnit().stepProceed();
+                return false;
+            } else {
+                // rewind and stop so that user can re-try this step after hot-fixing it
+                context.getExecutionUnit().stepReset();
+                return false;               
+            }
         } else if (stepBack) {
             stepBack = false;
             return stop("step");
@@ -185,12 +193,12 @@ public class DebugThread implements ExecutionHook, LogAppender {
         return handler.FRAMES.get(stack.peek());
     }
 
-    protected DebugThread clearStepModes() {
+    protected DebugThread _continue() {
         stepModes.clear();
         return this;
     }
 
-    protected DebugThread step() {
+    protected DebugThread next() {
         stepModes.put(stack.size(), true);
         return this;
     }
@@ -214,8 +222,8 @@ public class DebugThread implements ExecutionHook, LogAppender {
         return this;
     }
 
-    protected DebugThread stepBack(boolean stepBack) {
-        this.stepBack = stepBack;
+    protected DebugThread stepBack() {
+        stepBack = true;
         return this;
     }
 
@@ -226,6 +234,11 @@ public class DebugThread implements ExecutionHook, LogAppender {
     public void setAppender(LogAppender appender) {
         this.appender = appender;
     }
+
+    @Override
+    public String getBuffer() {
+        return appender.getBuffer();
+    }        
 
     @Override
     public String collect() {
@@ -272,5 +285,10 @@ public class DebugThread implements ExecutionHook, LogAppender {
     public void reportPerfEvent(PerfEvent event) {
 
     }
+
+    @Override
+    public String toString() {
+        return "id: " + id + ", name: " + name + ", stack: " + stack;
+    }        
 
 }

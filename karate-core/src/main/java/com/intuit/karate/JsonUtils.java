@@ -38,8 +38,10 @@ import com.jayway.jsonpath.spi.mapper.MappingProvider;
 import de.siegmar.fastcsv.reader.CsvContainer;
 import de.siegmar.fastcsv.reader.CsvReader;
 import de.siegmar.fastcsv.reader.CsvRow;
+import de.siegmar.fastcsv.writer.CsvWriter;
 import java.io.IOException;
 import java.io.StringReader;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -50,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import jdk.nashorn.api.scripting.ScriptObjectMirror;
+import net.minidev.json.JSONArray;
 import net.minidev.json.JSONStyle;
 import net.minidev.json.JSONValue;
 import net.minidev.json.parser.JSONParser;
@@ -94,7 +97,7 @@ public class JsonUtils {
 
     }
     
-    private static class ElementJsonWriter implements JsonWriterI<Element> {
+    private static class DriverElementJsonWriter implements JsonWriterI<Element> {
 
         @Override
         public <E extends Element> void writeJSONString(E value, Appendable out, JSONStyle compression) throws IOException {
@@ -107,7 +110,7 @@ public class JsonUtils {
         // prevent things like the karate script bridge getting serialized (especially in the javafx ui)
         JSONValue.registerWriter(ScriptObjectMirror.class, new NashornObjectJsonWriter());
         JSONValue.registerWriter(Feature.class, new FeatureJsonWriter());
-        JSONValue.registerWriter(DriverElement.class, new ElementJsonWriter());
+        JSONValue.registerWriter(DriverElement.class, new DriverElementJsonWriter());
         // ensure that even if jackson (databind?) is on the classpath, don't switch provider
         Configuration.setDefaults(new Configuration.Defaults() {
 
@@ -231,6 +234,27 @@ public class JsonUtils {
 
     public static String escapeValue(String raw) {
         return JSONValue.escape(raw, JSONStyle.LT_COMPRESS);
+    }
+
+    public static Object nashornObjectToJavaJSON(Object jsObj) {
+        if (jsObj instanceof ScriptObjectMirror) {
+            ScriptObjectMirror jsObjectMirror = (ScriptObjectMirror) jsObj;
+            if (jsObjectMirror.isArray()) {
+                List list = new JSONArray();
+                for (Map.Entry<String, Object> entry : jsObjectMirror.entrySet()) {
+                    list.add(nashornObjectToJavaJSON(entry.getValue()));
+                }
+                return list;
+            } else {
+                Map<String, Object> map = new LinkedHashMap<>();
+                for (Map.Entry<String, Object> entry : jsObjectMirror.entrySet()) {
+                    map.put(entry.getKey(), nashornObjectToJavaJSON(entry.getValue()));
+                }
+                return map;
+            }
+        } else {
+            return jsObj;
+        }
     }
 
     public static void removeKeysWithNullValues(Object o) {
@@ -447,10 +471,36 @@ public class JsonUtils {
             throw new RuntimeException(e);
         }
     }
+    
+    public static String toCsv(List<Map<String, Object>> list) {
+        List<String[]> csv = new ArrayList(list.size() + 1);
+        // header row
+        boolean first = true;
+        for (Map<String, Object> map : list) {
+            int colCount = map.size();
+            if (first) {
+                Set<String> keys = map.keySet();
+                csv.add(keys.toArray(new String[colCount]));
+                first = false;
+            }
+            String[] row = new String[colCount];
+            List cols = new ArrayList(map.values());
+            for (int i = 0; i < colCount; i++) {
+                row[i] = new ScriptValue(cols.get(i)).getAsString();
+            }
+            csv.add(row);
+        }
+        CsvWriter csvWriter = new CsvWriter();
+        StringWriter sw = new StringWriter();
+        try {
+            csvWriter.write(sw, csv);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return sw.toString();        
+    }
 
-    /**
-     * use bracket notation if needed instead of dot notation
-     */
+    // use bracket notation if needed instead of dot notation
     public static String buildPath(String parentPath, String key) {
         boolean needsQuotes = key.indexOf('-') != -1 || key.indexOf(' ') != -1 || key.indexOf('.') != -1;
         return needsQuotes ? parentPath + "['" + key + "']" : parentPath + '.' + key;

@@ -44,7 +44,8 @@ public abstract class WebDriver implements Driver {
     protected final Command command;
     protected final Http http;
     private final String sessionId;
-    private final String windowId;
+    private boolean terminated;
+    //private final String windowId;
 
     protected boolean open = true;
 
@@ -59,16 +60,41 @@ public abstract class WebDriver implements Driver {
         if (response.status() != 200) {
             String message = "webdriver session create status " + response.status() + ", " + response.body().asString();
             logger.error(message);
+            if (command != null) {
+                command.close(true);
+            }
             throw new RuntimeException(message);
         }
         sessionId = response.jsonPath("get[0] response..sessionId").asString();
         logger.debug("init session id: {}", sessionId);
         http.url("/session/" + sessionId);
-        windowId = http.path("window").get().jsonPath("$.value").asString();
-        logger.debug("init window id: {}", windowId);
+        //windowId = http.path("window").get().jsonPath("$.value").asString();
+        //logger.debug("init window id: {}", windowId);
         if (options.start) {
             activate();
         }
+    }
+
+    @Override
+    public Driver timeout(Integer millis) {
+        options.setTimeout(millis);
+        // this will "reset" to default if null was set above
+        http.config("readTimeout", options.getTimeout() + "");
+        return this;
+    }
+
+    @Override
+    public Driver timeout() {
+        return timeout(null);
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    // can be used directly if you know what you are doing !
+    public Http getHttp() {
+        return http;
     }
 
     private String getSubmitHash() {
@@ -79,6 +105,9 @@ public abstract class WebDriver implements Driver {
         if (options.isRetryEnabled()) {
             waitFor(locator); // will throw exception if not found
         }
+        if (options.highlight) {
+            highlight(locator, options.highlightDuration);
+        }
         String before = options.getPreSubmitHash();
         if (before != null) {
             logger.trace("submit requested, will wait for page load after next action on : {}", locator);
@@ -86,7 +115,7 @@ public abstract class WebDriver implements Driver {
             T result = action.get();
             Integer retryInterval = options.getRetryInterval();
             options.setRetryInterval(500); // reduce retry interval for this special case
-            options.retry(() -> getSubmitHash(), hash -> !before.equals(hash), "waiting for document to change");
+            options.retry(() -> getSubmitHash(), hash -> !before.equals(hash), "waiting for document to change", false);
             // extra precaution TODO is this needed
             // waitUntil("document.readyState == 'complete'");
             options.setRetryInterval(retryInterval); // restore
@@ -121,8 +150,8 @@ public abstract class WebDriver implements Driver {
         return DriverElement.locatorExists(this, locator);
     }
 
-    private ScriptValue eval(String expression) {
-        Json json = new Json().set("script", expression).set("args", "[]");
+    protected ScriptValue eval(String expression, List args) {
+        Json json = new Json().set("script", expression).set("args", (args == null) ? Collections.EMPTY_LIST : args);
         Http.Response res = http.path("execute", "sync").post(json);
         if (isJavaScriptError(res)) {
             logger.warn("javascript failed, will retry once: {}", res.body().asString());
@@ -135,6 +164,10 @@ public abstract class WebDriver implements Driver {
             }
         }
         return res.jsonPath("$.value").value();
+    }
+
+    protected ScriptValue eval(String expression) {
+        return eval(expression, null);
     }
 
     protected String getElementKey() {
@@ -313,7 +346,16 @@ public abstract class WebDriver implements Driver {
     }
 
     @Override
+    public boolean isTerminated() {
+        return terminated;
+    }
+
+    @Override
     public void quit() {
+        if (terminated) {
+            return;
+        }
+        terminated = true;
         if (open) {
             close();
         }
@@ -392,7 +434,7 @@ public abstract class WebDriver implements Driver {
                 logger.warn("waitUntil evaluate failed: {}", e.getMessage());
                 return false;
             }
-        }, b -> b, "waitUntil (js)");
+        }, b -> b, "waitUntil (js)", true);
     }
 
     @Override
@@ -470,7 +512,7 @@ public abstract class WebDriver implements Driver {
                 return http.path("element", id, "screenshot").get().jsonPath("$.value").asString();
             });
         }
-        byte[] bytes = Base64.getDecoder().decode(temp);
+        byte[] bytes = getDecoder().decode(temp);
         if (embed) {
             options.embedPngImage(bytes);
         }
@@ -491,15 +533,23 @@ public abstract class WebDriver implements Driver {
         for (String handle : list) {
             http.path("window").post(getJsonForHandle(handle));
             String title = getTitle();
-            if (titleOrUrl.equals(title)) {
+            if (title != null && title.contains(titleOrUrl)) {
                 return;
             }
-            String temp = options.removeProtocol(titleOrUrl);
-            String url = options.removeProtocol(getUrl());
-            if (temp.equals(url)) {
+            String url = getUrl();
+            if (url != null && url.contains(titleOrUrl)) {
                 return;
             }
         }
+    }
+
+    @Override
+    public void switchPage(int index) {
+        if (index == -1) {
+            return;
+        }
+        String json = new Json().set("id", index).toString();
+        http.path("window").post(json);
     }
 
     @Override
@@ -535,4 +585,7 @@ public abstract class WebDriver implements Driver {
         });
     }
 
+    protected Base64.Decoder getDecoder() {
+        return Base64.getDecoder();
+    }
 }

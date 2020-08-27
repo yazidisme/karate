@@ -59,7 +59,7 @@ public class ScenarioResult {
             if (steps == null || steps.isEmpty()) {
                 return;
             }
-            Map<String, Object> map = steps.get(steps.size() - 1);           
+            Map<String, Object> map = steps.get(steps.size() - 1);
             List<Map<String, Object>> embedList = (List) map.get("embeddings");
             if (embedList == null) {
                 embedList = new ArrayList();
@@ -70,7 +70,7 @@ public class ScenarioResult {
             getLastStepResult().addEmbed(embed);
         }
     }
-    
+
     public StepResult getLastStepResult() {
         if (stepResults.isEmpty()) {
             return null;
@@ -139,10 +139,7 @@ public class ScenarioResult {
                 StepResult callResult = new StepResult(call, Result.passed(0), null, null, null);
                 callResult.setHidden(stepResult.isHidden());
                 list.add(callResult.toMap());
-                for (StepResult sr : fr.getStepResults()) { // flattened
-                    if (sr.isHidden()) {
-                        continue;
-                    }
+                for (StepResult sr : fr.getAllScenarioStepResultsNotHidden()) {
                     Map<String, Object> map = sr.toMap();
                     String temp = (String) map.get("keyword");
                     map.put("keyword", StringUtils.repeat('>', depth + 1) + ' ' + temp);
@@ -167,7 +164,7 @@ public class ScenarioResult {
         return list;
     }
 
-    public Map<String, Object> backgroundToMap() {        
+    public Map<String, Object> backgroundToMap() {
         if (backgroundJson != null) {
             return backgroundJson;
         }
@@ -245,6 +242,17 @@ public class ScenarioResult {
         return stepResults;
     }
 
+    public List<StepResult> getStepResultsNotHidden() {
+        List<StepResult> list = new ArrayList(stepResults.size());
+        for (StepResult sr : stepResults) {
+            if (sr.isHidden()) {
+                continue;
+            }
+            list.add(sr);
+        }
+        return list;
+    }
+
     public boolean isFailed() {
         return failedStep != null;
     }
@@ -260,6 +268,10 @@ public class ScenarioResult {
     public long getDurationNanos() {
         return durationNanos;
     }
+    
+    public double getDurationMillis() {
+        return Engine.nanosToMillis(durationNanos);
+    }    
 
     public String getThreadName() {
         return threadName;

@@ -306,16 +306,15 @@ public class StepActions implements Actions {
     }
 
     @Override
-    @When("^match (.+)(=|contains|any|only)$")
-    public void matchDocstring(String expression, String operators, String rhs) {
-        MatchStep m = new MatchStep(expression + operators);
-        context.match(m.type, m.name, m.path, rhs);
-    }
-
-    @Override
-    @When("^match (.+)(=|contains|any|only)( .+)$")
-    public void match(String expression, String operators, String rhs) {
-        MatchStep m = new MatchStep(expression + operators + rhs);
+    @When("^match (.+)(=|contains|any|only|deep)(.*)")
+    public void match(String expression, String op1, String op2, String rhs) {
+        if (op2 == null) {
+            op2 = "";
+        }
+        if (rhs == null) {
+            rhs = "";
+        }
+        MatchStep m = new MatchStep(expression + op1 + op2 + rhs);
         context.match(m.type, m.name, m.path, m.expected);
     }
 
@@ -349,15 +348,15 @@ public class StepActions implements Actions {
     }
 
     @Override
-    @When("^call ([^\\s]+)( .*)?")
-    public void call(String name, String arg) {
-        context.call(false, name, arg);
+    @When("^call (.+)")
+    public void call(String line) {
+        context.call(false, line);
     }
 
     @Override
-    @When("^callonce ([^\\s]+)( .*)?")
-    public void callonce(String name, String arg) {
-        context.call(true, name, arg);
+    @When("^callonce (.+)")
+    public void callonce(String line) {
+        context.call(true, line);
     }
 
     @Override

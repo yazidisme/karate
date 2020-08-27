@@ -39,6 +39,8 @@ public class Config {
 
     public static final int DEFAULT_RETRY_INTERVAL = 3000;
     public static final int DEFAULT_RETRY_COUNT = 3;
+    public static final int DEFAULT_TIMEOUT = 30000;
+    public static final int DEFAULT_HIGHLIGHT_DURATION = 3000;
 
     private boolean sslEnabled = false;
     private String sslAlgorithm = "TLS";
@@ -50,8 +52,8 @@ public class Config {
     private String sslTrustStoreType;
     private boolean sslTrustAll = true;
     private boolean followRedirects = true;
-    private int readTimeout = 30000;
-    private int connectTimeout = 30000;
+    private int readTimeout = DEFAULT_TIMEOUT;
+    private int connectTimeout = DEFAULT_TIMEOUT;
     private Charset charset = FileUtils.UTF8;
     private String proxyUri;
     private String proxyUsername;
@@ -61,6 +63,7 @@ public class Config {
     private ScriptValue headers = ScriptValue.NULL;
     private ScriptValue cookies = ScriptValue.NULL;
     private ScriptValue responseHeaders = ScriptValue.NULL;
+    private long responseDelay = 0L;
     private boolean lowerCaseResponseHeaders = false;
     private boolean corsEnabled = false;
     private boolean logPrettyRequest;
@@ -73,6 +76,7 @@ public class Config {
     private Map<String, Object> userDefined;
     private Target driverTarget;
     private Map<String, Object> driverOptions;
+    private Map<String, Object> robotOptions; // TODO make generic plugin model
     private ScriptValue afterScenario = ScriptValue.NULL;
     private ScriptValue afterFeature = ScriptValue.NULL;
     private HttpLogModifier logModifier;
@@ -84,6 +88,10 @@ public class Config {
     // report config
     private boolean showLog = true;
     private boolean showAllSteps = true;
+    
+    // call single cache config
+    private int callSingleCacheMinutes = 0;
+    private String callSingleCacheDir = FileUtils.getBuildDir();
 
     public Config() {
         // zero arg constructor
@@ -105,6 +113,9 @@ public class Config {
                 return false;
             case "responseHeaders":
                 responseHeaders = value;
+                return false;
+            case "responseDelay":
+                responseDelay = value.isNull() ? 0L : Double.valueOf(value.getAsString()).longValue();
                 return false;
             case "lowerCaseResponseHeaders":
                 lowerCaseResponseHeaders = value.isBooleanTrue();
@@ -143,6 +154,9 @@ public class Config {
             case "driver":
                 driverOptions = value.getAsMap();
                 return false;
+            case "robot":
+                robotOptions = value.getAsMap();
+                return false;                
             case "driverTarget":
                 if (value.isMapLike()) {
                     Map<String, Object> map = value.getAsMap();
@@ -167,6 +181,13 @@ public class Config {
                 return false;
             case "abortedStepsShouldPass":
                 abortedStepsShouldPass = value.isBooleanTrue();
+                return false;
+            case "callSingleCache":
+                if (value.isMapLike()) {
+                    Map<String, Object> map = value.getAsMap();
+                    callSingleCacheMinutes = get(map, "minutes", callSingleCacheMinutes);
+                    callSingleCacheDir = get(map, "dir", callSingleCacheDir);
+                }
                 return false;
             // here on the http client has to be re-constructed ================
             case "httpClientClass":
@@ -258,6 +279,7 @@ public class Config {
         headers = parent.headers;
         cookies = parent.cookies;
         responseHeaders = parent.responseHeaders;
+        responseDelay = parent.responseDelay;
         lowerCaseResponseHeaders = parent.lowerCaseResponseHeaders;
         corsEnabled = parent.corsEnabled;
         logPrettyRequest = parent.logPrettyRequest;
@@ -267,6 +289,7 @@ public class Config {
         clientInstance = parent.clientInstance;
         userDefined = parent.userDefined;
         driverOptions = parent.driverOptions;
+        robotOptions = parent.robotOptions;
         driverTarget = parent.driverTarget;
         afterScenario = parent.afterScenario;
         afterFeature = parent.afterFeature;
@@ -277,6 +300,8 @@ public class Config {
         outlineVariablesAuto = parent.outlineVariablesAuto;
         abortedStepsShouldPass = parent.abortedStepsShouldPass;
         logModifier = parent.logModifier;
+        callSingleCacheMinutes = parent.callSingleCacheMinutes;
+        callSingleCacheDir = parent.callSingleCacheDir;
     }
 
     public void setCookies(ScriptValue cookies) {
@@ -373,6 +398,10 @@ public class Config {
         return responseHeaders;
     }
 
+    public long getResponseDelay() {
+        return responseDelay;
+    }
+
     public boolean isLowerCaseResponseHeaders() {
         return lowerCaseResponseHeaders;
     }
@@ -404,6 +433,10 @@ public class Config {
     public Map<String, Object> getDriverOptions() {
         return driverOptions;
     }
+
+    public Map<String, Object> getRobotOptions() {
+        return robotOptions;
+    }        
 
     public HttpClient getClientInstance() {
         return clientInstance;
@@ -480,5 +513,13 @@ public class Config {
     public HttpLogModifier getLogModifier() {
         return logModifier;
     }
+
+    public String getCallSingleCacheDir() {
+        return callSingleCacheDir;
+    }
+
+    public int getCallSingleCacheMinutes() {
+        return callSingleCacheMinutes;
+    }        
 
 }

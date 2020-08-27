@@ -32,6 +32,7 @@ import com.intuit.karate.netty.FeatureServer;
 import com.intuit.karate.netty.FileChangedWatcher;
 import net.masterthought.cucumber.Configuration;
 import net.masterthought.cucumber.ReportBuilder;
+import org.apache.commons.collections.CollectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
@@ -60,8 +61,8 @@ public class Main implements Callable<Void> {
     @Option(names = {"-h", "--help"}, usageHelp = true, description = "display this help message")
     boolean help;
 
-    @Option(names = {"-m", "--mock"}, description = "mock server file")
-    File mock;
+    @Option(names = {"-m", "--mocks"}, description = "mock server file(s)")
+    List<File> mocks;
 
     @Option(names = {"-p", "--port"}, description = "mock server port (required for --mock)")
     Integer port;
@@ -112,6 +113,7 @@ public class Main implements Callable<Void> {
     String importFile;
 
     public static void main(String[] args) {
+        boolean isClean = false;
         boolean isOutputArg = false;
         String outputDir = DEFAULT_OUTPUT_DIR;
         // hack to manually extract the output dir arg to redirect karate.log if needed
@@ -128,12 +130,21 @@ public class Main implements Callable<Void> {
                     isOutputArg = true;
                 }
             }
+            if (s.startsWith("-C") || s.startsWith("--clean")) {
+                isClean = true;
+            }
         }
-        System.setProperty("karate.output.dir", outputDir);
-        // ensure we init logback before anything else
-        String logbackConfig = System.getProperty(LOGBACK_CONFIG);
-        if (StringUtils.isBlank(logbackConfig)) {
-            System.setProperty(LOGBACK_CONFIG, "logback-netty.xml");
+        if (isClean) {
+            // ensure karate.log is not held open which will prevent 
+            // a graceful delete of "target" especially on windows
+            System.setProperty(LOGBACK_CONFIG, "logback-nofile.xml");
+        } else {
+            System.setProperty("karate.output.dir", outputDir);
+            // ensure we init logback before anything else
+            String logbackConfig = System.getProperty(LOGBACK_CONFIG);
+            if (StringUtils.isBlank(logbackConfig)) {
+                System.setProperty(LOGBACK_CONFIG, "logback-netty.xml");
+            }
         }
         logger = LoggerFactory.getLogger(Main.class);
         logger.info("Karate version: {}", FileUtils.getKarateVersion());
@@ -196,7 +207,7 @@ public class Main implements Callable<Void> {
         if (clean) {
             return null;
         }
-        if (mock == null) {
+        if (CollectionUtils.isEmpty(mocks)) {
             CommandLine.usage(this, System.err);
             return null;
         }
@@ -211,10 +222,13 @@ public class Main implements Callable<Void> {
             cert = new File(FeatureServer.DEFAULT_CERT_NAME);
             key = new File(FeatureServer.DEFAULT_KEY_NAME);
         }
-        FeatureServer server = FeatureServer.start(mock, port, ssl, cert, key, null);
+        if (env != null) { // some advanced mocks may want karate.env
+            System.setProperty(ScriptBindings.KARATE_ENV, env);
+        }
+        FeatureServer server = FeatureServer.start(mocks, port, ssl, cert, key, null);
         if (watch) {
-            logger.info("--watch enabled, will hot-reload: {}", mock.getName());
-            FileChangedWatcher watcher = new FileChangedWatcher(mock, server, port, ssl, cert, key);
+            logger.info("--watch enabled, will hot-reload: {}", mocks.stream().map((f) -> f.getName()).collect(Collectors.toList()));
+            FileChangedWatcher watcher = new FileChangedWatcher(mocks, server, port, ssl, cert, key);
             watcher.watch();
         }
         server.waitSync();

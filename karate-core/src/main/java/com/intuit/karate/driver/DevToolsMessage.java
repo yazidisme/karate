@@ -30,12 +30,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author pthomas3
  */
 public class DevToolsMessage {
+
+    private static final Logger logger = LoggerFactory.getLogger(DevToolsMessage.class);
 
     protected final DevToolsDriver driver;
 
@@ -84,7 +88,14 @@ public class DevToolsMessage {
             return null;
         }
         Json json = new Json(params);
-        return json.get(path, clazz);
+        try {
+            return json.get(path, clazz);
+        } catch (Exception e) {
+            if (logger.isTraceEnabled()) {
+                logger.trace("json-path evaluation failed: {}", e.getMessage());
+            }
+            return null;
+        }
     }
 
     public Map<String, Object> getParams() {
@@ -93,11 +104,7 @@ public class DevToolsMessage {
 
     public void setParams(Map<String, Object> params) {
         this.params = params;
-    }
-
-    public boolean isResultPresent() {
-        return result != null;
-    }
+    }  
 
     public ScriptValue getResult() {
         return result;
@@ -163,21 +170,23 @@ public class DevToolsMessage {
         method = (String) map.get("method");
         params = (Map) map.get("params");
         Map temp = (Map) map.get("result");
-        if (temp != null && temp.containsKey("result")) {
-            Object inner = temp.get("result");
-            if (inner instanceof List) {
-                result = new ScriptValue(toMap((List) inner));
-            } else {
-                Map innerMap = (Map) inner;
-                String subtype = (String) innerMap.get("subtype");
-                if ("error".equals(subtype) || innerMap.containsKey("objectId")) {
-                    result = new ScriptValue(innerMap);
-                } else { // Runtime.evaluate "returnByValue" is true
-                    result = new ScriptValue(innerMap.get("value"));
+        if (temp != null) {
+            if (temp.containsKey("result")) {
+                Object inner = temp.get("result");
+                if (inner instanceof List) {
+                    result = new ScriptValue(toMap((List) inner));
+                } else {
+                    Map innerMap = (Map) inner;
+                    String subtype = (String) innerMap.get("subtype");
+                    if ("error".equals(subtype) || innerMap.containsKey("objectId")) {
+                        result = new ScriptValue(innerMap);
+                    } else { // Runtime.evaluate "returnByValue" is true
+                        result = new ScriptValue(innerMap.get("value"));
+                    }
                 }
+            } else {
+                result = new ScriptValue(temp);
             }
-        } else {
-            result = new ScriptValue(temp);
         }
         error = (Map) map.get("error");
     }

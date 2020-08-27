@@ -95,6 +95,8 @@ public class FeatureParserTest {
         for (StepResult step : result.getScenarioResults().get(0).getStepResults()) {
             assertEquals("passed", step.getResult().getStatus());
         }
+        Map<String, Object> map = result.getResultAsPrimitiveMap();
+        Match.equalsText(map.get("backSlash"), "C:\\foo\\bar\\");        
     }
 
     @Test
@@ -202,5 +204,11 @@ public class FeatureParserTest {
         assertTrue(step.isPrint());
         assertEquals("print a", step.getText());
     }
+    
+    @Test
+    public void testComments() {
+        FeatureResult result = execute("test-comments.feature");
+        assertFalse(result.isFailed());
+    }    
 
 }

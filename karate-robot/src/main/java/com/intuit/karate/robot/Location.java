@@ -23,39 +23,78 @@
  */
 package com.intuit.karate.robot;
 
+import com.intuit.karate.Config;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  *
  * @author pthomas3
  */
 public class Location {
 
-    public Robot robot;
-    
+    public final RobotBase robot;
     public final int x;
     public final int y;
 
-    public Location(int x, int y) {
+    public Location(RobotBase robot, int x, int y) {
+        this.robot = robot;
         this.x = x;
         this.y = y;
     }
-    
-    public Location with(Robot robot) {
-        this.robot = robot;
-        return this;
-    }
-    
+
     public Location move() {
         robot.move(x, y);
         return this;
-    }   
-    
+    }
+
     public Location click() {
         return click(1);
     }
-    
+
     public Location click(int num) {
-        robot.move(x, y).click(num);
+        robot.move(x, y); // do not chain, causes recursion
+        robot.click(num);
         return this;
+    }
+
+    public Location doubleClick() {
+        robot.move(x, y); // do not chain, causes recursion        
+        robot.doubleClick();
+        return this;
+    }
+
+    public Location press() {
+        robot.move(x, y); // do not chain, causes recursion
+        robot.press();
+        return this;
+    }
+
+    public Location release() {
+        robot.move(x, y); // do not chain, causes recursion
+        robot.release();
+        return this;
+    }
+    
+    public Location highlight() {
+        return highlight(Config.DEFAULT_HIGHLIGHT_DURATION);
+    }
+
+    public Location highlight(int duration) {
+        new Region(robot, x - 5, y - 5, 10, 10).highlight(duration);
+        return this;
+    }
+
+    public Map<String, Object> asMap() {
+        Map<String, Object> map = new HashMap(2);
+        map.put("x", x);
+        map.put("y", y);
+        return map;
+    }
+
+    @Override
+    public String toString() {
+        return asMap().toString();
     }
 
 }

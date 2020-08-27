@@ -26,10 +26,11 @@ package com.intuit.karate.junit4;
 import com.intuit.karate.Resource;
 import com.intuit.karate.FileUtils;
 import com.intuit.karate.RunnerOptions;
-import com.intuit.karate.core.Engine;
 import com.intuit.karate.core.Feature;
 import com.intuit.karate.core.FeatureParser;
 import com.intuit.karate.core.FeatureResult;
+import com.intuit.karate.core.HtmlFeatureReport;
+import com.intuit.karate.core.HtmlSummaryReport;
 import com.intuit.karate.core.Tags;
 import java.io.File;
 import java.io.IOException;
@@ -58,6 +59,8 @@ public class Karate extends ParentRunner<Feature> {
     private final List<Feature> children;
     private final Map<String, FeatureInfo> featureMap;
     private final String tagSelector;
+    private final HtmlSummaryReport summary;
+    private final String targetDir;
 
     public Karate(Class<?> clazz) throws InitializationError, IOException {
         super(clazz);
@@ -65,7 +68,7 @@ public class Karate extends ParentRunner<Feature> {
         if (!testMethods.isEmpty()) {
             logger.warn("WARNING: there are methods annotated with '@Test', they will NOT be run when using '@RunWith(Karate.class)'");
         }
-        RunnerOptions options = RunnerOptions.fromAnnotationAndSystemProperties(clazz);
+        RunnerOptions options = RunnerOptions.fromAnnotationAndSystemProperties(null, null, clazz);
         List<Resource> resources = FileUtils.scanForFeatureFiles(options.getFeatures(), clazz.getClassLoader());
         children = new ArrayList(resources.size());
         featureMap = new HashMap(resources.size());
@@ -76,6 +79,8 @@ public class Karate extends ParentRunner<Feature> {
             children.add(feature);
         }
         tagSelector = Tags.fromKarateOptionsTags(options.getTags());
+        summary = new HtmlSummaryReport();
+        targetDir = FileUtils.getBuildDir() + File.separator + "surefire-reports";
     }
 
     @Override
@@ -111,8 +116,13 @@ public class Karate extends ParentRunner<Feature> {
                 throw new RuntimeException(e);
             }
         }
-        FeatureInfo info = new FeatureInfo(feature, tagSelector);
-        featureMap.put(feature.getRelativePath(), info);
+        String relativePath = feature.getRelativePath();
+        // for whatever reason the junit 4 lifecycle can call describeChild() multiple times
+        FeatureInfo info = featureMap.get(relativePath);
+        if (info == null) {
+            info = new FeatureInfo(feature, tagSelector);
+            featureMap.put(relativePath, info);
+        }
         return info.description;
     }
 
@@ -122,13 +132,17 @@ public class Karate extends ParentRunner<Feature> {
         info.setNotifier(notifier);
         info.unit.run();
         FeatureResult result = info.exec.result;
-        result.printStats(null);
-        Engine.saveResultHtml(FileUtils.getBuildDir() + File.separator + "surefire-reports", result, null);
+        if (!result.isEmpty()) {
+            result.printStats(null);
+            HtmlFeatureReport.saveFeatureResult(targetDir, result);
+            summary.addFeatureResult(result);
+        }
     }
 
     @Override
     public void run(RunNotifier notifier) {
         super.run(notifier);
+        summary.save(targetDir);
     }
 
 }

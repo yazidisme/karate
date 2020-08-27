@@ -23,6 +23,7 @@
  */
 package com.intuit.karate.core;
 
+import com.intuit.karate.Actions;
 import com.intuit.karate.AssertionResult;
 import com.intuit.karate.AssignType;
 import com.intuit.karate.CallContext;
@@ -41,6 +42,7 @@ import com.intuit.karate.http.Cookie;
 import com.intuit.karate.http.HttpClient;
 import com.intuit.karate.Config;
 import com.intuit.karate.LogAppender;
+import com.intuit.karate.StepActions;
 import com.intuit.karate.http.HttpRequest;
 import com.intuit.karate.http.HttpRequestBuilder;
 import com.intuit.karate.http.HttpResponse;
@@ -57,8 +59,8 @@ import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 import java.io.File;
 import java.io.InputStream;
-import java.lang.reflect.Constructor;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -88,8 +90,7 @@ public class ScenarioContext {
     public final FeatureContext featureContext;
     public final Collection<ExecutionHook> executionHooks;
     public final boolean perfMode;
-    public final ScenarioInfo scenarioInfo;
-    private final ClassLoader classLoader;
+    public final ClassLoader classLoader;
 
     public final Function<String, Object> read = s -> {
         ScriptValue sv = FileUtils.readFile(s, this);
@@ -104,12 +105,14 @@ public class ScenarioContext {
     private Config config;
     private HttpClient client;
     private Driver driver;
+    private Plugin robot;
 
     private HttpRequestBuilder request = new HttpRequestBuilder();
 
     // the actual http request/response last sent on the wire    
     private HttpRequest prevRequest;
     private HttpResponse prevResponse;
+    private boolean reportDisabled;
 
     // pass call result to engine via this variable (hack)
     private List<FeatureResult> callResults;
@@ -122,6 +125,9 @@ public class ScenarioContext {
 
     // debug support
     private ScenarioExecutionUnit executionUnit;
+
+    // scenario
+    private final Scenario scenario;
 
     // async
     private final Object LOCK = new Object();
@@ -157,7 +163,16 @@ public class ScenarioContext {
         return temp;
     }
 
-    public void addCallResult(FeatureResult callResult) {
+    public void addCallResult(FeatureResult result) {
+        ScenarioContext threadContext = Engine.THREAD_CONTEXT.get();
+        if (threadContext != null) {
+            threadContext.addCallResultInternal(result);
+        } else {
+            addCallResultInternal(result);
+        }
+    }
+
+    private void addCallResultInternal(FeatureResult callResult) {
         if (callResults == null) {
             callResults = new ArrayList();
         }
@@ -172,8 +187,11 @@ public class ScenarioContext {
         this.executionUnit = executionUnit;
     }
 
-    public void setScenarioError(Throwable error) {
-        scenarioInfo.setErrorMessage(error.getMessage());
+    public Scenario getScenario() {
+        ScenarioContext threadContext = Engine.THREAD_CONTEXT.get();
+        ScenarioContext scenarioContext = (threadContext != null) ? threadContext : this;
+        ScenarioExecutionUnit unit = scenarioContext.executionUnit;
+        return (unit != null) ? unit.scenario : scenarioContext.scenario;
     }
 
     public void setPrevRequest(HttpRequest prevRequest) {
@@ -220,6 +238,33 @@ public class ScenarioContext {
         return classLoader.getResourceAsStream(name);
     }
 
+    private static Map<String, Object> info(ScenarioContext context) {
+        Map<String, Object> info = new HashMap(6);
+        Path featurePath = context.featureContext.feature.getPath();
+        if (featurePath != null) {
+            info.put("featureDir", featurePath.getParent().toString());
+            info.put("featureFileName", featurePath.getFileName().toString());
+        }
+        ScenarioExecutionUnit unit = context.executionUnit;
+        if (unit != null) { // should never happen
+            info.put("scenarioName", unit.scenario.getName());
+            info.put("scenarioDescription", unit.scenario.getDescription());
+            info.put("scenarioType", unit.scenario.getKeyword());
+            String errorMessage = unit.getError() == null ? null : unit.getError().getMessage();
+            info.put("errorMessage", errorMessage);
+        }
+        return info;
+    }
+
+    public Map<String, Object> getScenarioInfo() {
+        ScenarioContext threadContext = Engine.THREAD_CONTEXT.get();
+        if (threadContext != null) {
+            return info(threadContext);
+        } else {
+            return info(this);
+        }
+    }
+
     public boolean hotReload() {
         boolean success = false;
         Scenario scenario = executionUnit.scenario;
@@ -258,6 +303,14 @@ public class ScenarioContext {
         }
     }
 
+    public boolean isReportDisabled() {
+        return reportDisabled;
+    }
+
+    public void setReportDisabled(boolean reportDisabled) {
+        this.reportDisabled = reportDisabled;
+    }
+
     public boolean isPrintEnabled() {
         return config.isPrintEnabled();
     }
@@ -283,11 +336,11 @@ public class ScenarioContext {
             Tags tagsEffective = scenario.getTagsEffective();
             tags = tagsEffective.getTags();
             tagValues = tagsEffective.getTagValues();
-            scenarioInfo = scenario.toInfo(featureContext.feature.getPath());
+            this.scenario = scenario;
         } else {
+            this.scenario = null;
             tags = null;
             tagValues = null;
-            scenarioInfo = null;
         }
         if (reuseParentContext) {
             parentContext = call.context;
@@ -312,8 +365,14 @@ public class ScenarioContext {
         bindings = new ScriptBindings(this);
         // TODO improve bindings re-use
         // for call + ui tests, extra step has to be done after bindings set
-        if (call.context != null && call.context.driver != null) {
-            setDriver(call.context.driver);
+        // note that the below code depends on bindings inited with things like the "karate" and "read" variable
+        if (call.context != null) {
+            if (call.context.driver != null) {
+                setDriver(call.context.driver);
+            } // TODO refactor plugin start
+            if (call.context.robot != null) {
+                setRobot(call.context.robot);
+            }
         }
         if (call.context == null && call.evalKarateConfig) {
             // base config is only looked for in the classpath
@@ -370,15 +429,11 @@ public class ScenarioContext {
         return call.context.classLoader;
     }
 
-    public ScenarioContext copy(ScenarioInfo info) {
-        return new ScenarioContext(this, info);
-    }
-
     public ScenarioContext copy() {
-        return new ScenarioContext(this, scenarioInfo);
+        return new ScenarioContext(this);
     }
 
-    private ScenarioContext(ScenarioContext sc, ScenarioInfo info) {
+    private ScenarioContext(ScenarioContext sc) {
         featureContext = sc.featureContext;
         classLoader = sc.classLoader;
         logger = sc.logger;
@@ -389,8 +444,8 @@ public class ScenarioContext {
         executionHooks = sc.executionHooks;
         perfMode = sc.perfMode;
         tags = sc.tags;
+        scenario = sc.scenario;
         tagValues = sc.tagValues;
-        scenarioInfo = info;
         vars = sc.vars.copy(true); // deep / snap-shot copy
         config = new Config(sc.config); // safe copy
         rootFeatureContext = sc.rootFeatureContext;
@@ -398,13 +453,20 @@ public class ScenarioContext {
         bindings = new ScriptBindings(this);
         // state
         request = sc.request.copy();
-        driver = sc.driver;
         prevRequest = sc.prevRequest;
         prevResponse = sc.prevResponse;
         prevPerfEvent = sc.prevPerfEvent;
         callResults = sc.callResults;
+        prevEmbeds = sc.prevEmbeds;
         webSocketClients = sc.webSocketClients;
         signalResult = sc.signalResult;
+        // plugin TODO make better
+        if (sc.driver != null) {
+            setDriver(sc.driver);
+        }
+        if (sc.robot != null) {
+            setRobot(sc.robot);
+        }
     }
 
     public void configure(Config config) {
@@ -508,12 +570,26 @@ public class ScenarioContext {
         ScriptValue sv = afterFeature ? config.getAfterFeature() : config.getAfterScenario();
         if (sv.isFunction()) {
             try {
+                Engine.THREAD_CONTEXT.set(this);
                 sv.invokeFunction(this, null);
+                Engine.THREAD_CONTEXT.set(null);
             } catch (Exception e) {
                 String prefix = afterFeature ? "afterFeature" : "afterScenario";
                 logger.warn("{} hook failed: {}", prefix, e.getMessage());
             }
         }
+    }
+
+    public Result evalAsStep(String expression) {
+        Scenario scenario = executionUnit.scenario;
+        Step evalStep = new Step(scenario.getFeature(), scenario, scenario.getIndex() + 1);
+        try {
+            FeatureParser.updateStepFromText(evalStep, expression);
+        } catch (Exception e) {
+            return Result.failed(0, e, evalStep);
+        }
+        Actions evalActions = new StepActions(this);
+        return Engine.executeStep(evalStep, evalActions);
     }
 
     //==========================================================================
@@ -786,9 +862,6 @@ public class ScenarioContext {
         }
         MultiPartItem item = new MultiPartItem(name, fileValue);
         String filename = asString(map, "filename");
-        if (filename == null) {
-            filename = name;
-        }
         item.setFilename(filename);
         String contentType = asString(map, "contentType");
         if (contentType != null) {
@@ -817,7 +890,7 @@ public class ScenarioContext {
                 if (exp == null) {
                     sb.append("null");
                 } else {
-                    ScriptValue sv = Script.getIfVariableReference(exp, this);
+                    ScriptValue sv = Script.getIfVariableReference(exp.trim(), this); // trim is important
                     if (sv == null) {
                         try {
                             sv = Script.evalJsExpression(exp, this);
@@ -865,8 +938,9 @@ public class ScenarioContext {
         Script.removeValueByPath(name, path, this);
     }
 
-    public void call(boolean callonce, String name, String arg) {
-        Script.callAndUpdateConfigAndAlsoVarsIfMapReturned(callonce, name, arg, this);
+    public void call(boolean callonce, String line) {
+        StringUtils.Pair pair = Script.parseCallArgs(line);
+        Script.callAndUpdateConfigAndAlsoVarsIfMapReturned(callonce, pair.left, pair.right, this);
     }
 
     public ScriptValue eval(String exp) {
@@ -883,7 +957,12 @@ public class ScenarioContext {
         Embed embed = new Embed();
         embed.setBytes(bytes);
         embed.setMimeType(contentType);
-        embed(embed);
+        ScenarioContext threadContext = Engine.THREAD_CONTEXT.get();
+        if (threadContext != null) {
+            threadContext.embed(embed);
+        } else {
+            embed(embed);
+        }
     }
 
     public void embed(Embed embed) {
@@ -935,27 +1014,37 @@ public class ScenarioContext {
         }
     }
 
-    // driver ==================================================================       
+    // driver and robot ========================================================     
     //
-    private void setDriver(Driver driver) {
-        this.driver = driver;
-        driver.getOptions().setContext(this);
-        bindings.putAdditionalVariable(ScriptBindings.DRIVER, driver);
-        // the most interesting hack in the world
-        for (String methodName : DriverOptions.DRIVER_METHOD_NAMES) {
-            String js = "function(){ if (arguments.length == 0) return driver." + methodName + "();"
-                    + " if (arguments.length == 1) return driver." + methodName + "(arguments[0]);"
-                    + " if (arguments.length == 2) return driver." + methodName + "(arguments[0], arguments[1]);"
-                    + " return driver." + methodName + "(arguments[0], arguments[1], arguments[2]) }";
+    private void autoDef(Plugin plugin, String instanceName) {
+        for (String methodName : plugin.methodNames()) {
+            String invoke = instanceName + "." + methodName;
+            String js = "function(){ if (arguments.length == 0) return " + invoke + "();"
+                    + " if (arguments.length == 1) return " + invoke + "(arguments[0]);"
+                    + " if (arguments.length == 2) return " + invoke + "(arguments[0], arguments[1]);"
+                    + " return " + invoke + "(arguments[0], arguments[1], arguments[2]) }";
             ScriptValue sv = ScriptBindings.eval(js, bindings);
             bindings.putAdditionalVariable(methodName, sv.getValue());
         }
-        bindings.putAdditionalVariable("Key", Key.INSTANCE);
+    }
+
+    public void setDriver(Driver driver) {
+        this.driver = driver;
+        driver.setContext(this);
+        bindings.putAdditionalVariable(ScriptBindings.DRIVER, driver);
+        if (robot != null) {
+            logger.warn("'robot' is active, use 'driver.' prefix for driver methods");
+            return;
+        }
+        autoDef(driver, ScriptBindings.DRIVER);
+        bindings.putAdditionalVariable(ScriptBindings.KEY, Key.INSTANCE);
     }
 
     public void driver(String expression) {
         ScriptValue sv = Script.evalKarateExpression(expression, this);
-        if (driver == null) {
+         // re-create driver within a test if needed
+         // but user is expected to call quit() OR use the driver keyword with a JSON argument
+        if (driver == null || driver.isTerminated() || sv.isMapLike()) {
             Map<String, Object> options = config.getDriverOptions();
             if (options == null) {
                 options = new HashMap();
@@ -971,28 +1060,43 @@ public class ScenarioContext {
         }
     }
 
+    public void setRobot(Plugin robot) {
+        this.robot = robot;
+        robot.setContext(this);
+        bindings.putAdditionalVariable(ScriptBindings.ROBOT, robot);
+        if (driver != null) {
+            logger.warn("'driver' is active, use 'robot.' prefix for robot methods");
+            return;
+        }
+        autoDef(robot, ScriptBindings.ROBOT);
+        bindings.putAdditionalVariable(ScriptBindings.KEY, Key.INSTANCE);
+    }
+
     public void robot(String expression) {
         ScriptValue sv = Script.evalKarateExpression(expression, this);
-        Map<String, Object> config;
-        if (sv.isMapLike()) {
-            config = sv.getAsMap();
-        } else if (sv.isString()) {
-            config = Collections.singletonMap("app", sv.getAsString());
-        } else {
-            config = Collections.EMPTY_MAP;
+        if (robot == null) {
+            Map<String, Object> options = config.getRobotOptions();
+            if (options == null) {
+                options = new HashMap();
+            }
+            if (sv.isMapLike()) {
+                options.putAll(sv.getAsMap());
+            } else if (sv.isString()) {
+                options.put("window", sv.getAsString());
+            }
+            try {
+                Class clazz = Class.forName("com.intuit.karate.robot.RobotFactory");
+                PluginFactory factory = (PluginFactory) clazz.newInstance();
+                robot = factory.create(this, options);
+            } catch (KarateException ke) {
+                throw ke;
+            } catch (Exception e) {
+                String message = "cannot instantiate robot, is 'karate-robot' included as a maven / gradle dependency ? " + e.getMessage();
+                logger.error(message);
+                throw new RuntimeException(message, e);
+            }
+            setRobot(robot);
         }
-        Object robot;
-        try {
-            Class clazz = Class.forName("com.intuit.karate.robot.Robot");
-            Constructor constructor = clazz.getDeclaredConstructor(ScenarioContext.class, Map.class);
-            robot = constructor.newInstance(this, config);
-        } catch (Exception e) {
-            String message = "cannot instantiate robot, is 'karate-robot' included as a maven / gradle dependency ? - " + e.getMessage();
-            logger.error(message);
-            throw new RuntimeException(message, e);
-        }
-        bindings.putAdditionalVariable("robot", robot);
-        bindings.putAdditionalVariable("Key", Key.INSTANCE);
     }
 
     public void stop(StepResult lastStepResult) {
@@ -1000,41 +1104,47 @@ public class ScenarioContext {
             if (driver != null) { // a called feature inited the driver
                 parentContext.setDriver(driver);
             }
+            if (robot != null) {
+                parentContext.setRobot(robot);
+            }
             parentContext.webSocketClients = webSocketClients;
             return; // don't kill driver yet
         }
-        if (webSocketClients != null) {
-            webSocketClients.forEach(WebSocketClient::close);
-        }
-        if (callDepth == 0 && driver != null) {
-            driver.quit();
-            DriverOptions options = driver.getOptions();
-            if (options.target != null) {
-                logger.debug("custom target configured, attempting stop()");
-                Map<String, Object> map = options.target.stop(logger);
-                String video = (String) map.get("video");
-                if (video != null && lastStepResult != null) {
-                    Embed embed = Embed.forVideoFile(video);
-                    lastStepResult.addEmbed(embed);
-                }
-            } else {
-                if (options.afterStop != null) {
-                    Command.execLine(null, options.afterStop);
-                }
-                if (options.videoFile != null) {
-                    File src = new File(options.videoFile);
-                    if (src.exists()) {
-                        String path = FileUtils.getBuildDir() + File.separator
-                                + "cucumber-html-reports" + File.separator + System.currentTimeMillis() + ".mp4";
-                        File dest = new File(path);
-                        FileUtils.copy(src, dest);
-                        Embed embed = Embed.forVideoFile(dest.getName());
+        if (callDepth == 0) {
+            if (webSocketClients != null) {
+                webSocketClients.forEach(WebSocketClient::close);
+            }
+            if (driver != null) {
+                driver.quit();
+                DriverOptions options = driver.getOptions();
+                if (options.target != null) {
+                    logger.debug("custom target configured, attempting stop()");
+                    Map<String, Object> map = options.target.stop(logger);
+                    String video = (String) map.get("video");
+                    if (video != null && lastStepResult != null) {
+                        Embed embed = Embed.forVideoFile(video);
                         lastStepResult.addEmbed(embed);
-                        logger.debug("appended video to report: {}", dest.getPath());
+                    }
+                } else {
+                    if (options.afterStop != null) {
+                        Command.execLine(null, options.afterStop);
+                    }
+                    if (options.videoFile != null) {
+                        File src = new File(options.videoFile);
+                        if (src.exists()) {
+                            String path = FileUtils.getBuildDir() + File.separator + System.currentTimeMillis() + ".mp4";
+                            File dest = new File(path);
+                            FileUtils.copy(src, dest);
+                            Embed embed = Embed.forVideoFile("../" + dest.getName());
+                            lastStepResult.addEmbed(embed);
+                            logger.debug("appended video to report: {}", dest.getPath());
+                        }
                     }
                 }
             }
-            driver = null;
+            if (robot != null) {
+                robot.afterScenario();
+            }
         }
     }
 

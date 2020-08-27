@@ -150,6 +150,35 @@ Scenario: java pojo to xml
     * xml xmlVar = pojo
     * match xmlVar == <root><foo></foo><bar>0</bar></root>
 
+Scenario: parsing json, xml or string
+    * def temp = karate.fromString('{ "foo": "bar" }')
+    * assert temp.json
+    * match temp.value == { foo: 'bar' }
+    * def temp = karate.fromString('<foo>bar</foo>')
+    * assert temp.xml
+    * match temp.value == <foo>bar</foo>
+    * def temp = karate.fromString('random text')
+    * assert temp.string
+    * match temp.value == 'random text'
+
+Scenario: parsing json, xml or string within a js block (use asMap)   
+    * eval
+    """
+    var temp = karate.fromString('{ "foo": "bar" }');
+    if (!temp.json) karate.fail('expected json');
+    var val = temp.asMap;
+    var res = karate.match(val, { foo: 'bar' });
+    if (!res.pass) karate.fail(res.message);
+    """
+
+Scenario: inspecting an arbitrary object
+    * def foo = { foo: 'bar' }
+    * def temp = karate.fromObject(foo)
+    * assert temp.mapLike
+    * def foo = ['foo', 'bar']
+    * def temp = karate.fromObject(foo)
+    * assert temp.listLike
+
 Scenario: json manipulation using string-replace
     * def data =
     """
